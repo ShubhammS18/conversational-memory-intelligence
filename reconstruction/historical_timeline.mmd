@@ -1,0 +1,22 @@
+flowchart TD
+    A0["Approach 0: Full Context Dump\nProvide every past thing as context.\nWorks initially. Remembers everything."]
+    B0["Bottleneck\nContext grows huge, chat hangs.\nRetrieval from long texts becomes difficult,\nimportant things get lost or de-prioritized."]
+    A1["Approach 1: Sliding Window\nTake only the past N messages as context\nand keep this sliding window.\nUses recent and updated info, avoids long context issues."]
+    B1["Bottleneck\nDiscards old conversation altogether.\nImportant things in old conversations are lost.\nLeads to results not aligned with initial plans."]
+    A2["Approach 2: Naive Retrieval and Semantic Similarity\nExtract and store key nuggets (decisions, updates).\nEmbed incoming requests and stored nuggets.\nRetrieve relevant info via semantic similarity search."]
+    B2["Bottleneck\nNaive retrieval, everything extracted gets stored (no write-side judgment).\nSimilarity-only ranking, no extra importance for recency\nor how often something has been useful.\nNo mechanism to handle conflicts or ambiguity."]
+    D["Derived Capabilities\nSee first_principles.md"]
+
+    A0 --> B0 --> A1 --> B1 --> A2 --> B2 --> D
+
+    classDef approach0 fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef bottleneck fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef approach1 fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef approach2 fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef derived fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+
+    class A0 approach0
+    class B0,B1,B2 bottleneck
+    class A1 approach1
+    class A2 approach2
+    class D derived

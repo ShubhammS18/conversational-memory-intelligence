@@ -40,8 +40,11 @@
     "I normally exercise after work.",
     "I prefer reading technical blogs over watching videos."
   ],
-
-  "evaluation_query": "What API key was I using during the debugging session?",
+  "workload_metadata": null,
+  "evaluation_query": {
+  "query": "What API key was I using during the debugging session?",
+  "user_id": null
+  },
 
   "expected_retrieval_issue": [
   "The API key is stored as a memory at write time because the baseline has no admission-time filtering for sensitive content.",

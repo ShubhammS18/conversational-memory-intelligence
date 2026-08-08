@@ -1,0 +1,42 @@
+{
+  "case_id": "case2",
+  "description": "Preferences change over time",
+  "expected_failure": "The baseline retrieves both the old and new architectural decisions because it has no temporal reasoning or conflict resolution.",
+  "expected_improvement": "Only the latest architectural decision should be retrieved after temporal reasoning and conflict resolution are added.",
+  "conversation": [
+    {
+      "role": "user",
+      "content": "For now, let's keep the document chunks and embeddings together inside a single vector_store.pkl file. It will be easier while building the first version."
+    },
+    {
+      "role": "assistant",
+      "content": "Sounds good. We'll store both embeddings and chunks together in vector_store.pkl for the initial implementation."
+    },
+    {
+      "role": "user",
+      "content": "As the project is growing, brute-force retrieval is becoming inefficient. Let's move to FAISS and keep the chunks separately."
+    },
+    {
+      "role": "assistant",
+      "content": "Agreed. We'll use a FAISS index for embeddings and store the document chunks separately."
+    },
+    {
+      "role": "user",
+      "content": "We have completely migrated to FAISS now. The old vector_store.pkl approach is no longer part of the project."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood. FAISS is now the active storage architecture and vector_store.pkl has been replaced."
+    }
+  ],
+  "filler_memories": [],
+  "workload_metadata": null,
+  "evaluation_query": {
+  "query": "Where does our project currently store embeddings?",
+  "user_id": null
+  },
+
+  "expected_retrieval_issue": [
+  "Both vector_store.pkl and FAISS decisions may be retrieved because the baseline has no temporal reasoning or conflict resolution."
+  ]
+}

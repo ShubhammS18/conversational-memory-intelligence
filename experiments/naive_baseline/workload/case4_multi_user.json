@@ -1,0 +1,57 @@
+{
+  "case_id": "case4",
+  "description": "Multiple users with similarly-worded information",
+  "expected_failure": "The baseline retrieves memories belonging to a different user because all memories are stored in a single shared pool without user isolation.",
+  "expected_improvement": "The improved system should retrieve memories only from the active user's memory space.",
+
+  "conversation": [
+    {
+      "role": "user",
+      "user_id": "user_a",
+      "content": "User A: I use FastAPI for deploying my machine learning applications."
+    },
+    {
+      "role": "assistant",
+      "user_id": "user_a",
+      "content": "Understood. User A prefers FastAPI for deployment."
+    },
+    {
+      "role": "user",
+      "user_id": "user_b",
+      "content": "User B: I use Flask for deploying my machine learning applications."
+    },
+    {
+      "role": "assistant",
+      "user_id": "user_b",
+      "content": "Understood. User B prefers Flask for deployment."
+    }
+  ],
+
+  "filler_memories": [
+    "I usually drink tea in the evening.",
+    "My favourite IDE is VS Code.",
+    "I prefer dark mode for coding.",
+    "I enjoy watching football on weekends.",
+    "I recently bought a new backpack.",
+    "I wake up at 6 AM every day.",
+    "I prefer working in quiet environments.",
+    "I usually take handwritten notes.",
+    "My favourite programming language is Python.",
+    "I like listening to instrumental music while working.",
+    "I recently upgraded my laptop RAM.",
+    "I enjoy hiking during holidays.",
+    "I use Git for version control.",
+    "I normally exercise after work.",
+    "I prefer reading technical blogs over watching videos."
+  ],
+  "workload_metadata": null,
+  "evaluation_query": {
+  "query": "Which framework do I use for deploying my machine learning applications?",
+  "user_id": "user_a"
+  },
+
+  "expected_retrieval_issue": [
+    "The baseline may retrieve User B's Flask preference because both users discuss the same topic using very similar language.",
+    "Since all memories are stored in a shared pool, retrieval is based only on semantic similarity and ignores user identity."
+  ]
+}

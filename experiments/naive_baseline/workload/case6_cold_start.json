@@ -1,0 +1,53 @@
+{
+  "case_id": "case6",
+  "description": "Cold-start / no relevant memory",
+  "expected_failure": "The baseline retrieves unrelated memories because it always returns the top-k most similar memories even when none of them are actually relevant.",
+  "expected_improvement": "The improved system should recognize that no relevant memory exists and avoid injecting unrelated memories into the prompt.",
+
+  "conversation": [
+    {
+      "role": "user",
+      "content": "I have been working on a machine learning project that uses FAISS for document retrieval."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood. Your project currently uses FAISS for retrieval."
+    },
+    {
+      "role": "user",
+      "content": "The embedding model being used is sentence-transformers/all-mpnet-base-v2."
+    },
+    {
+      "role": "assistant",
+      "content": "Got it. The project uses all-mpnet-base-v2 for generating embeddings."
+    }
+  ],
+
+  "filler_memories": [
+    "I usually drink tea in the evening.",
+    "My favourite IDE is VS Code.",
+    "I prefer dark mode for coding.",
+    "I enjoy watching football on weekends.",
+    "I recently bought a new backpack.",
+    "I wake up at 6 AM every day.",
+    "I prefer working in quiet environments.",
+    "I usually take handwritten notes.",
+    "My favourite programming language is Python.",
+    "I like listening to instrumental music while working.",
+    "I recently upgraded my laptop RAM.",
+    "I enjoy hiking during holidays.",
+    "I use Git for version control.",
+    "I normally exercise after work.",
+    "I prefer reading technical blogs over watching videos."
+  ],
+  "workload_metadata": null,
+  "evaluation_query": {
+  "query": "Can you recommend a good 5-day itinerary for visiting Japan?",
+  "user_id": null
+  },
+
+  "expected_retrieval_issue": [
+    "The retriever still returns the top-k memories even though none of the stored memories are relevant to the query.",
+    "The injected context contains unrelated information about machine learning instead of returning no memory."
+  ]
+}

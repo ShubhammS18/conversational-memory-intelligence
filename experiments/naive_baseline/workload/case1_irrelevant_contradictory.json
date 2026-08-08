@@ -1,0 +1,58 @@
+{
+  "case_id": "case1",
+  "description": "Irrelevant and contradictory memories",
+  "expected_failure": "The baseline retrieves an irrelevant memory because of semantic similarity and also retrieves contradictory architectural decisions because it has no conflict resolution.",
+  "expected_improvement": "The improved system should filter irrelevant memories and retrieve only the current architectural decision.",
+  "conversation": [
+    {
+      "role": "user",
+      "content": "I recently switched to a new apartment because my office moved closer."
+    },
+    {
+      "role": "assistant",
+      "content": "Got it. You recently moved to a new apartment."
+    },
+    {
+      "role": "user",
+      "content": "Initially, we decided to store embeddings and chunks together inside vector_store.pkl."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood. The current storage design uses vector_store.pkl."
+    },
+    {
+      "role": "user",
+      "content": "We later migrated to FAISS and completely replaced the vector_store.pkl approach."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood. FAISS is now the active storage architecture."
+    }
+  ],
+  "filler_memories": [
+  "My favourite breakfast is poha with tea.",
+  "I usually schedule team meetings on Wednesday mornings.",
+  "I recently started using VS Code for most of my projects.",
+  "The weather has been unusually hot this week.",
+  "I prefer listening to instrumental music while working.",
+  "My next vacation is planned for December.",
+  "I bought a new mechanical keyboard last month.",
+  "I normally exercise in the evening.",
+  "I enjoy watching Formula 1 on weekends.",
+  "I switched my phone wallpaper yesterday.",
+  "I usually drink coffee before starting work.",
+  "I have been learning to cook Italian food.",
+  "My favourite football club is Real Madrid.",
+  "I prefer dark mode in most applications.",
+  "I recently reorganized my desk setup."
+  ],
+  "workload_metadata": null,
+  "evaluation_query": {
+  "query": "Should we switch our memory storage from FAISS to PostgreSQL?",
+  "user_id": null
+  },
+  "expected_retrieval_issue": [
+    "Apartment switching memory may be retrieved because it shares the word 'switch'.",
+    "Both vector_store.pkl and FAISS decisions may be retrieved together."
+  ]
+}

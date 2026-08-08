@@ -1,0 +1,7 @@
+case_id,memory_count,retrieved_count,latency_ms,failures_observed,failure_names
+case1,18,10,70.485,1,contradictory_memories_retrieved
+case2,3,3,70.075,1,old_and_new_decisions_retrieved
+case3,50,10,63.846,1,multiple_historical_architectural_decisions_retrieved
+case4,17,10,85.665,1,different_users_memory_retrieved
+case5,17,10,83.305,1,sensitive_memory_remains_retrievable_after_forget_request
+case6,17,10,65.854,1,unrelated_memories_retrieved_for_cold_start

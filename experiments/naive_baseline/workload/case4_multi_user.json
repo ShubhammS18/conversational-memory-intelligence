@@ -8,7 +8,7 @@
     {
       "role": "user",
       "user_id": "user_a",
-      "content": "User A: I use FastAPI for deploying my machine learning applications."
+      "content": "I use FastAPI for deploying my machine learning applications."
     },
     {
       "role": "assistant",
@@ -18,7 +18,7 @@
     {
       "role": "user",
       "user_id": "user_b",
-      "content": "User B: I use Flask for deploying my machine learning applications."
+      "content": "I use Flask for deploying my machine learning applications."
     },
     {
       "role": "assistant",

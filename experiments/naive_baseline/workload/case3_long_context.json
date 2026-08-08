@@ -1,0 +1,226 @@
+{
+  "case_id": "case3",
+  "description": "Long conversations with constrained context budget",
+  "expected_failure": "The baseline retrieves multiple historical architectural decisions while consuming a large portion of the available context because it performs no context budgeting or temporal reasoning.",
+  "expected_improvement": "The improved system should prioritize the current architectural decision while constructing context within a fixed token budget.",
+  "conversation": [
+    {
+      "role": "user",
+      "content": "I recently bought a new keyboard."
+    },
+    {
+      "role": "user",
+      "content": "I normally take a short break after several hours of work."
+    },
+    {
+      "role": "user",
+      "content": "I enjoy watching documentaries during weekends."
+    },
+    {
+      "role": "user",
+      "content": "I usually drink tea while working."
+    },
+    {
+      "role": "user",
+      "content": "I normally take handwritten notes."
+    },
+    {
+      "role": "user",
+      "content": "I usually organize files into separate project folders."
+    },
+    {
+      "role": "user",
+      "content": "I prefer writing down ideas before implementing them."
+    },
+    {
+      "role": "user",
+      "content": "I prefer short meetings over long meetings."
+    },
+    {
+      "role": "user",
+      "content": "I like working in quiet environments."
+    },
+    {
+      "role": "user",
+      "content": "I recently bought a new keyboard."
+    },
+    {
+      "role": "user",
+      "content": "Initially, we decided to store embeddings and document chunks together inside vector_store.pkl."
+    },
+    {
+      "role": "user",
+      "content": "I like learning new software tools through small experiments."
+    },
+    {
+      "role": "user",
+      "content": "I prefer writing down ideas before implementing them."
+    },
+    {
+      "role": "user",
+      "content": "I prefer using keyboard shortcuts when possible."
+    },
+    {
+      "role": "user",
+      "content": "I enjoy listening to instrumental music while coding."
+    },
+    {
+      "role": "user",
+      "content": "I usually plan my tasks the night before."
+    },
+    {
+      "role": "user",
+      "content": "I usually check my calendar in the morning."
+    },
+    {
+      "role": "user",
+      "content": "I recently bought a new keyboard."
+    },
+    {
+      "role": "user",
+      "content": "I like reading books about technology."
+    },
+    {
+      "role": "user",
+      "content": "I prefer Python for rapid prototyping."
+    },
+    {
+      "role": "user",
+      "content": "I enjoy trying different vegetarian recipes."
+    },
+    {
+      "role": "user",
+      "content": "I prefer working on one major task at a time."
+    },
+    {
+      "role": "user",
+      "content": "I like reading books about technology."
+    },
+    {
+      "role": "user",
+      "content": "I usually listen to podcasts while travelling."
+    },
+    {
+      "role": "user",
+      "content": "I keep my development projects organized by topic."
+    },
+    {
+      "role": "user",
+      "content": "As the project grew, we migrated embeddings to a FAISS index while storing document chunks separately."
+    },
+    {
+      "role": "user",
+      "content": "I usually organize files into separate project folders."
+    },
+    {
+      "role": "user",
+      "content": "I recently upgraded my laptop RAM."
+    },
+    {
+      "role": "user",
+      "content": "I like keeping my workspace clean."
+    },
+    {
+      "role": "user",
+      "content": "I usually check my calendar in the morning."
+    },
+    {
+      "role": "user",
+      "content": "I prefer Python for rapid prototyping."
+    },
+    {
+      "role": "user",
+      "content": "I usually organize files into separate project folders."
+    },
+    {
+      "role": "user",
+      "content": "I usually plan my tasks the night before."
+    },
+    {
+      "role": "user",
+      "content": "I prefer simple interfaces without unnecessary options."
+    },
+    {
+      "role": "user",
+      "content": "I prefer working on one major task at a time."
+    },
+    {
+      "role": "user",
+      "content": "I recently bought a new keyboard."
+    },
+    {
+      "role": "user",
+      "content": "I usually drink tea while working."
+    },
+    {
+      "role": "user",
+      "content": "I usually plan my tasks the night before."
+    },
+    {
+      "role": "user",
+      "content": "I prefer Python for rapid prototyping."
+    },
+    {
+      "role": "user",
+      "content": "I enjoy hiking during holidays."
+    },
+    {
+      "role": "user",
+      "content": "The migration is complete. vector_store.pkl has been removed and FAISS is now the active storage architecture."
+    },
+    {
+      "role": "user",
+      "content": "I like keeping my workspace clean."
+    },
+    {
+      "role": "user",
+      "content": "I usually keep track of completed tasks in a checklist."
+    },
+    {
+      "role": "user",
+      "content": "I usually check my calendar in the morning."
+    },
+    {
+      "role": "user",
+      "content": "I usually plan my tasks the night before."
+    },
+    {
+      "role": "user",
+      "content": "I prefer using keyboard shortcuts when possible."
+    },
+    {
+      "role": "user",
+      "content": "I prefer simple interfaces without unnecessary options."
+    },
+    {
+      "role": "user",
+      "content": "I normally take a short break after several hours of work."
+    },
+    {
+      "role": "user",
+      "content": "I enjoy watching documentaries during weekends."
+    },
+    {
+      "role": "user",
+      "content": "I enjoy listening to instrumental music while coding."
+    }
+  ],
+  "filler_memories": [],
+  "workload_metadata": {
+    "random_seed": 10,
+    "total_memories": 50,
+    "signal_memory_positions": [
+      10,
+      25,
+      40
+    ]
+  },
+  "evaluation_query": {
+    "query": "What is the current storage architecture used by the project?",
+    "user_id": null
+  },
+  "expected_retrieval_issue": [
+    "The baseline retrieves multiple historical architectural decisions because it has no temporal reasoning or conflict resolution.",
+    "Retrieved memories consume a significant portion of the available context because the baseline performs no context budgeting or summarization."
+  ]
+}

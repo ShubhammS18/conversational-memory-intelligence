@@ -253,18 +253,7 @@ def run_case(case_path):
     context_lines.append("")
     context_lines.append("[Current Conversation]")
 
-    conversation = case.get("conversation", [])
-
-    if conversation:
-        user_turns = [
-        turn for turn in conversation
-        if turn["role"] == "user"]
-
-    if user_turns:
-        last_user_turn = user_turns[-1]
-
-        context_lines.append(
-            f"{last_user_turn['role']}: {last_user_turn['content']}")
+    context_lines.append(f"user: {evaluation_query['query']}")
 
     context = "\n".join(context_lines)
 

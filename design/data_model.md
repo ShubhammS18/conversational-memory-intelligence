@@ -30,7 +30,6 @@ Each durable memory is represented by the following logical record:
 | `valid_until` | timestamp | No | Explicit end of the memory's validity period. |
 | `supersedes` | list[string] | No | Memory IDs explicitly replaced by this memory. |
 | `superseded_by` | string | No | Memory ID that explicitly replaced this memory. |
-| `forgotten_at` | timestamp | No | Time at which the memory was explicitly forgotten. This is a deletion marker, not a lifecycle state. |
 
 ---
 
@@ -65,9 +64,9 @@ when resolving conflicts.
 
 Example:
 
-```{
-  "source": "explicit",
-  "conversation_id": "conv_123"}
+
+```
+{ "source": "explicit" }
 ```
 
 ---
@@ -158,8 +157,7 @@ Those properties are represented separately in the memory metadata.
   "valid_from": null,
   "valid_until": null,
   "supersedes": ["mem_001"],
-  "superseded_by": null,
-  "forgotten_at": null}
+  "superseded_by": null}
 ```
 
 

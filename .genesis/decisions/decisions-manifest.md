@@ -25,7 +25,35 @@ No brand requirements. Provide concise human-readable CLI output plus stable str
 Use typed errors and explicit status metadata. Retry only safe idempotent work. Allow degraded startup only when all returned memories remain authorized and consistent; otherwise refuse startup.
 
 ## Integration points
-A local Python caller and CLI, SQLite, persisted FAISS files, SentenceTransformers using `all-mpnet-base-v2`, an approved tokenizer adapter, a trusted UTC clock, approved configuration, and the local filesystem. Remote services, external LLM calls, and response generation are not integration points for this milestone.
+A local Python caller and CLI, SQLite, persisted FAISS files, SentenceTransformers using `all-mpnet-base-v2`, `tiktoken` using the exact `cl100k_base` encoding for context-budget accounting, a trusted UTC clock, approved configuration, and the local filesystem. `tiktoken` is used only for token counting and does not introduce response generation or an external LLM call. Remote services, external LLM calls, and response generation are not integration points for this milestone.
+
+## Approved implementation layout
+- Production package root: `src/conversational_memory/`
+- Top-level production areas: `domain`, `application`, `infrastructure`, `composition`, and `entrypoints`
+- SQLite migrations: `src/conversational_memory/infrastructure/sqlite/migrations/`
+- Test areas:
+  - `tests/architecture/`
+  - `tests/unit/`
+  - `tests/adapter/`
+  - `tests/integration/`
+  - `tests/regression/`
+  - `tests/evaluation/`
+- CLI module: `python -m conversational_memory.entrypoints.cli`
+- Milestone-specific CLI subcommands may be defined during G5.
+
+## Authoritative implementation sequence
+1. Admit, embed, persist pending, index, restart, retrieve, and construct bounded context.
+2. Current-state filtering.
+3. No-relevant-memory behavior.
+4. Supersession and conflict handling.
+5. Historical retrieval.
+6. Expiration.
+7. Forgetting.
+8. Recovery and reconciliation.
+9. Privacy-safe observability.
+10. Complete fixed-workload evaluation.
+
+This ten-slice sequence governs Genesis implementation planning. `design/sprint_plan.md` remains historical design material but does not override this sequence.
 
 ## Auth requirements
 The caller establishes identity. Every normal memory operation is scoped to that identity. No cross-user read, update, or deletion is allowed even when a memory ID is known. Recovery uses a separate internal interface. Implementing authentication is outside scope.
@@ -40,7 +68,6 @@ SQLite and FAISS diverge during a partial failure or restart, causing a valid me
 Any cross-user disclosure, sensitive-memory retention, retrieval of deleted or invalid current-state memory, token-budget violation, duplicate side effect on retry, or demonstration that relies on mocked SQLite, FAISS, or embeddings.
 
 ## Known unknowns → research spikes needed
-- Select and verify the exact tokenizer used for context accounting without introducing response generation into scope.
 - Measure crash recovery, atomic FAISS replacement, rebuild duration, and single-writer capacity on the target local environment.
 
 ## Assumptions never stated aloud (agent-inferred from answers above)

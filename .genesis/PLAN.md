@@ -9,27 +9,47 @@ human/visual view; this is the one loops read). Sliced so each milestone ships i
 
 ---
 
-## Brainstorm (G0.5 — fill before slicing milestones)
+## Brainstorm (G0.5 — completed before slicing milestones)
 
-> Three fundamentally different approaches to the cognitive job. Pick one. Record the rationale.
-> This is the cheapest design decision — you haven't written a line of code yet.
+> Three fundamentally different approaches to the cognitive job. The selected approach is the approved
+> implementation architecture; the alternatives remain recorded so the trade-off is explicit.
 
-### Approach A — {{APPROACH_A_NAME}}
-{{APPROACH_A_DESCRIPTION}}
-- Strengths: {{APPROACH_A_STRENGTHS}}
-- Weaknesses: {{APPROACH_A_WEAKNESSES}}
+### Approach A — Direct Integrated Script
 
-### Approach B — {{APPROACH_B_NAME}}
-{{APPROACH_B_DESCRIPTION}}
-- Strengths: {{APPROACH_B_STRENGTHS}}
-- Weaknesses: {{APPROACH_B_WEAKNESSES}}
+Build one synchronous Python service with concrete SQLite, FAISS, SentenceTransformer, and token-counting dependencies wired directly into the workflow. Keep admission, retrieval, ranking, lifecycle, and context logic in a small number of implementation modules without formal ports.
 
-### Approach C — {{APPROACH_C_NAME}}
-{{APPROACH_C_DESCRIPTION}}
-- Strengths: {{APPROACH_C_STRENGTHS}}
-- Weaknesses: {{APPROACH_C_WEAKNESSES}}
+- Strengths:
+  - Provides the shortest path from the approved prototypes to a runnable integrated pipeline.
+  - Minimizes initial interface and composition code.
+- Weaknesses:
+  - Couples memory behavior to SQLite, FAISS, SentenceTransformers, and entry-point concerns.
+  - Makes failure injection, adapter replacement, and isolated domain testing harder.
 
-### Chosen: {{CHOSEN_APPROACH}} — {{CHOSEN_RATIONALE}}
+### Approach B — Local Modular Monolith with Ports and Adapters
+
+Build one synchronous Python deployment organized into domain, application, infrastructure, composition, and entry-point areas. The application service coordinates the workflow through small interfaces, deterministic rules remain framework-independent, and concrete SQLite, FAISS, SentenceTransformer, and `tiktoken` adapters are connected at one composition point.
+
+- Strengths:
+  - Preserves explicit dependency boundaries and keeps deterministic memory policy independent of storage and model tools.
+  - Supports unit, adapter, restart, recovery, and end-to-end testing without introducing distributed deployment.
+- Weaknesses:
+  - Requires more initial interface, mapping, composition, and architecture-test work than a direct pipeline.
+  - SQLite/FAISS consistency, indexing state, locking, and recovery still require explicit application-level coordination.
+
+### Approach C — Service-Separated or Event-Driven System
+
+Admission, indexing, retrieval, and recovery would be separated into independently operated services or workers, potentially connected through network calls or durable queues.
+
+- Strengths:
+  - Components could be isolated and scaled independently.
+  - Indexing and recovery could move to durable background workers.
+- Weaknesses:
+  - Introduces networking, queues, distributed consistency, deployment, and operational complexity unsupported by current requirements.
+  - Makes local validation slower and expands the project beyond its approved evidence and scope.
+
+### Chosen: Local Modular Monolith with Ports and Adapters
+
+The modular-monolith approach was selected because it preserves the approved domain and infrastructure boundaries, supports deterministic safety and recovery testing, and keeps all components in one synchronous local deployment without introducing unnecessary service or distributed-system complexity.
 
 ---
 

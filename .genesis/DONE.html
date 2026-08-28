@@ -40,11 +40,67 @@
   <!-- ───────────── THE LOCKED SPEC ───────────── -->
   <h2>1 · The Locked Spec (what we are building)</h2>
   <div class="card locked">
-    <p><b>Cognitive job:</b> {{COGNITIVE_JOB}}</p>
-    <p><b>Inputs:</b> {{INPUTS}} &nbsp;→&nbsp; <b>Outputs:</b> {{OUTPUTS}}</p>
-    <p><b>Autonomy level:</b> {{AUTONOMY}} &nbsp;|&nbsp; <b>Human-in-the-loop points:</b> {{HITL}}</p>
-    <p><b>Failure tolerance:</b> {{FAILURE_TOLERANCE}} &nbsp;|&nbsp; <b>Trust boundary:</b> {{TRUST_BOUNDARY}}</p>
-    <p class="note">Filled during Genesis step G0 (Cognitive Design) via <code>agentic-swe-master</code>.</p>
+    <p><b>Routing context:</b> This is an existing project moving from completed design and focused
+       prototypes into integrated implementation. The target is a synchronous local Python modular monolith.
+       The current focus is Phase 3 Backend/API implementation; the completed Phase 6 Memory Architecture
+       governs the implementation, and Phase 9 fixed-workload evaluation follows integration. The reusable
+       memory layer is the main system; chatbot and response generation are outside the approved implementation.</p>
+
+    <p><b>Cognitive job:</b> Given a user’s conversation turns, current query, identity, and existing
+       memory history, determine what information is worth retaining and which valid memories should be
+       retrieved into a bounded context, so that future responses use relevant and current information
+       without exposing another user’s data or returning sensitive, stale, or deleted memories.</p>
+
+    <p><b>Inputs:</b> A trusted caller-established <code>RequestContext</code>; validated conversation-turn
+       content and structured semantic fields; a non-empty current query; authoritative memory history from
+       the structured source store; a trusted timezone-aware UTC clock; and approved configuration for
+       admission, ranking, relevance, retention, token budgeting, embeddings, and index metadata.
+       Caller-supplied timestamps are source-event or provenance information only and never control memory
+       creation time, default validity, expiration, or lifecycle decisions.</p>
+
+    <p><b>Outputs:</b> Admission returns an accepted, rejected, or temporary decision with a reason,
+       memory ID and typed record when created, indexing state, retrievability, and supersession information.
+       Retrieval returns an ordered list of authorized eligible memories, lifecycle and ranking evidence,
+       inclusion and exclusion reasons, the final bounded context, tokenizer and token use, budget exclusions,
+       and an explicit no-relevant-memory result. Decision details are available as structured metadata or
+       privacy-safe events so evaluators can reproduce why each memory was admitted, rejected, ranked,
+       included, or excluded.</p>
+
+    <p><b>Decision policy:</b> User isolation, sensitive-data rejection, deletion, expiration,
+       supersession, lifecycle eligibility, and token-budget enforcement are deterministic and override
+       semantic similarity. Probabilistic embedding similarity and relevance ranking operate only after
+       deterministic checks pass. Similar-score ties prefer newer memories, then explicit user statements,
+       then a stable identifier. Uncertain durable admission is rejected or kept temporary, and retrieval
+       returns no memory rather than forcing the nearest candidate.</p>
+
+    <p><b>Autonomy level:</b> The service may validate requests, apply approved admission rules, reject
+       sensitive or low-value input, persist accepted memories, update the derived index, retrieve and rank
+       eligible memories, apply explicit supersession, enforce recorded expiration, and construct bounded
+       context automatically within approved policy.</p>
+
+    <p><b>Human-in-the-loop points:</b> Forgetting begins only after an explicit authorized request.
+       Uncertain supersession, destructive consolidation, overwriting current facts, and uncertain durable
+       conclusions require approval or remain pending. Changes to admission policy, ranking weights,
+       relevance thresholds, token budgets, retention rules, embedding configuration, or other system-wide
+       policy require human approval and a documented configuration or design change.</p>
+
+    <p><b>Failure tolerance:</b> Fail closed whenever identity, ownership, sensitive-data handling,
+       lifecycle eligibility, deletion state, or token-budget enforcement cannot be verified. SQLite is the
+       authoritative source store and FAISS is derived. If SQLite succeeds but FAISS indexing or durable save
+       fails, retain the record as pending or failed, keep it non-retrievable, report that full success was
+       not achieved, and retry or rebuild safely. Partial deletion is never success: an accepted forget
+       request immediately blocks every retrieval path while cleanup remains pending. Partial retrieval is
+       allowed only when it is a safe subset of verified, authorized, lifecycle-valid, within-budget memories.</p>
+
+    <p><b>Trust boundary:</b> The primary boundary is between each authenticated user and every other
+       user’s memories. Identity comes only from the trusted caller context and cannot be overridden by
+       conversation content or request payloads. Every normal storage, retrieval, update, and deletion
+       operation is user-scoped. Conversation text is untrusted and must pass validation, admission, and
+       sensitive-data checks before durable storage. Authentication itself remains outside the memory layer.</p>
+
+    <p class="note">Approved during Genesis step G0 (Cognitive Design) via
+       <code>agentic-swe-master</code>. This record defines the implementation boundary; scope expansion
+       requires a separate approved decision.</p>
   </div>
 
   <!-- ───────────── DEFINITION OF DONE ───────────── -->

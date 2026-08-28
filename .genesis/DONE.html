@@ -298,14 +298,24 @@
     <table>
       <thead><tr><th>#</th><th>Milestone</th><th>Phase</th><th>Demo command (proves it works)</th><th>Loops</th><th>Status</th></tr></thead>
       <tbody>
-        <tr><td>M1</td><td>{{M1_NAME}}</td><td>{{M1_PHASE}}</td><td><code>{{M1_DEMO}}</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
-        <tr><td>M2</td><td>{{M2_NAME}}</td><td>{{M2_PHASE}}</td><td><code>{{M2_DEMO}}</code></td><td>L1, L3, L4</td><td><span class="pill">todo</span></td></tr>
-        <tr><td>M3</td><td>{{M3_NAME}}</td><td>{{M3_PHASE}}</td><td><code>{{M3_DEMO}}</code></td><td>L1, L2, L4</td><td><span class="pill">todo</span></td></tr>
-        <tr><td>…</td><td>add rows as the plan is sliced</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>M1</td><td>Persisted End-to-End Memory Slice</td><td>0, 1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-first-slice</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M2</td><td>Current-State Filtering</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-current-state</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M3</td><td>Explicit No-Relevant-Memory Result</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-no-memory</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M4</td><td>Supersession and Conflict Handling</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-supersession</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M5</td><td>Historical Retrieval</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-history</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M6</td><td>Trusted-Clock Expiration</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-expiration</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M7</td><td>Global, Idempotent Forgetting</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-forgetting</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M8</td><td>Recovery and Reconciliation</td><td>1, 3, 6, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-recovery</code></td><td>L1, L3, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M9</td><td>Privacy-Safe Observability</td><td>1, 3, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-observability</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M10</td><td>Complete Fixed-Workload Evaluation</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli evaluate-fixed-workload</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
       </tbody>
     </table>
-    <p class="note">Total token budget = (n milestones × 50000). Update <span class="pill wip">wip</span> /
-       <span class="pill ok">done</span> as loops complete. This table is mirrored in <code>PLAN.md</code> for the agent to parse.</p>
+    <p class="note">Total token budget = 10 milestones × 50000 = 500000. Update
+       <span class="pill wip">wip</span> / <span class="pill ok">done</span> only as the required loops and
+       applicable phase gates complete. This table is mirrored in <code>PLAN.md</code> for the agent to parse.
+       All commands are planned commands until their milestone creates the named implementation and test files.
+       M1 additionally requires <code>python -m pip install -e .</code> followed by
+       <code>python -m conversational_memory.entrypoints.cli --help</code> before its verification and demonstration commands.</p>
   </div>
 
   <!-- ───────────── SKILL LOADING ───────────── -->

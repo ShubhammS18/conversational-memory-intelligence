@@ -50,15 +50,190 @@
   <!-- ───────────── DEFINITION OF DONE ───────────── -->
   <h2>2 · Definition of Done (binary gates — checked by the VERIFIER, not the maker)</h2>
   <div class="card">
-    <div class="gate"><span class="box"></span><span class="label">Dependency direction inward, zero cycles <span class="note">(modular-architecture gate)</span></span></div>
-    <div class="gate"><span class="box"></span><span class="label">Every outbound call has a timeout / circuit-breaker <span class="note">(production-readiness gate)</span></span></div>
-    <div class="gate"><span class="box"></span><span class="label">All LLM/structured outputs validated against a schema <span class="note">(llmops gate)</span></span></div>
-    <div class="gate"><span class="box"></span><span class="label">Threat model written; prompt-injection / untrusted-input considered <span class="note">(security gate)</span></span></div>
-    <div class="gate"><span class="box"></span><span class="label"><code>{{TYPECHECK_CMD}}</code> clean AND <code>{{TEST_CMD}}</code> green in CI</span></div>
-    <div class="gate"><span class="box"></span><span class="label">One <code>verify</code> pass by a <b>separate</b> agent/model (L4)</span></div>
-    <div class="gate"><span class="box"></span><span class="label">No <code>context-graph.json</code> invariant violated by the change</span></div>
-    <p class="note">A milestone is DONE only when every box above is checked by the verifier. Pull each
-       gate from the relevant <code>agentic-swe-master</code> phase gate.</p>
+    <p><b>Phase 0 · Cognitive Design</b></p>
+    <p class="note"><b>Canonical gate:</b> Cognitive job is written down. Autonomy level is explicit. Failure modes listed.
+       <br /><b>Source:</b> <code>agentic-swe-master/SKILL.md → Phase 0: Cognitive Design</code></p>
+    <div class="gate"><span class="box"></span><span class="label">
+      <code>.genesis/DONE.html</code> section 1 contains no placeholders and records the approved cognitive job,
+      inputs, outputs, autonomy, human approval points, failure tolerance, and trust boundary.
+      <span class="pill">Genesis prerequisite</span>
+      <span class="note">Proof: inspect DONE.html section 1 and decisions/decisions-manifest.md.</span>
+    </span></div>
+
+    <p><b>Phase 1 · System Architecture Design</b></p>
+    <p class="note"><b>Canonical gate:</b> Architecture style chosen with justification. Service graph exists.
+       Boundary types stated (source / deployment / process / service). No cycles in dependency graph.
+       <br /><b>Source:</b> <code>agentic-swe-master/SKILL.md → Phase 1: System Architecture Design</code></p>
+    <div class="gate"><span class="box"></span><span class="label">
+      The approved local modular-monolith style, justification, and source/process/deployment boundaries are
+      recorded in a durable Genesis design artifact.
+      <span class="pill">Genesis prerequisite</span>
+      <span class="note">Proof: inspect the approved G0.5 architecture record.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      <code>.genesis/context-graph.json</code> contains the six approved planned nodes, twelve approved planned
+      edges, and three project invariants, and parses with
+      <code>python -m json.tool .genesis/context-graph.json</code>.
+      <span class="pill">G2 evidence</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      The complete dependency graph is acyclic and production domain code does not import application,
+      infrastructure, composition, or entry-point code.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/architecture -q</code>.</span>
+    </span></div>
+
+    <p><b>Phase 3 · Backend Engineering &amp; API Layer</b></p>
+    <p class="note"><b>Canonical gate:</b> Service modules defined. At least one state machine drawn with explicit
+       states. Every outbound call has a timeout strategy.
+       <br /><b>Source:</b> <code>agentic-swe-master/SKILL.md → Phase 3: Backend Engineering &amp; API Layer</code>
+       <br /><b>Scope:</b> The runtime service has no approved remote outbound calls. Any future network integration
+       requires a separate timeout decision.</p>
+    <div class="gate"><span class="box"></span><span class="label">
+      <code>domain</code>, <code>application</code>, <code>infrastructure</code>, <code>composition</code>,
+      <code>entrypoints</code>, and <code>tests</code> exist with the approved inward dependency direction.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/architecture -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      The public first-slice API is exactly <code>admit(context, request)</code> and
+      <code>retrieve(context, request)</code>; boundary models are validated and authoritative identity comes only
+      from <code>RequestContext</code>.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/unit/application -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Admission follows <code>validate → admit → embed → SQLite pending → FAISS add/save → SQLite indexed</code>,
+      and pending or failed records are non-retrievable.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_admission_indexing.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      A real-component restart test proves admission, persistence, stable mapping, owner retrieval, cross-user
+      exclusion, bounded context, and idempotent retry without duplicate rows or vectors.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_first_slice.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Architecture inspection and tests confirm that the runtime service introduces no remote outbound client.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/architecture -q</code>.</span>
+    </span></div>
+
+    <p><b>Phase 6 · Memory Architecture</b></p>
+    <p class="note"><b>Canonical gate:</b> Memory tiers separated explicitly. RAG pipeline uses hybrid retrieval.
+       Every response cites its source. Freshness strategy defined.
+       <br /><b>Source:</b> <code>agentic-swe-master/SKILL.md → Phase 6: Memory Architecture</code>
+       <br /><b>Scope:</b> Hybrid retrieval and response generation are not approved. The memory layer uses dense
+       SentenceTransformer/FAISS retrieval and returns memory IDs, provenance, ranking evidence, and inclusion reasons.</p>
+    <div class="gate"><span class="box"></span><span class="label">
+      SQLite is authoritative; FAISS is derived and rebuildable; durable records retain float32 embeddings with
+      matching model and dimension metadata.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/adapter tests/integration/test_restart_persistence.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Ownership, deletion, lifecycle, sensitive-data, indexing-state, and token-budget rules deterministically
+      override semantic similarity.
+      <span class="pill">later milestones</span>
+      <span class="note">Proof: <code>python -m pytest tests/unit/domain tests/regression -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Retrieval returns selected memory IDs, provenance, lifecycle status, ranking evidence, inclusion/exclusion
+      reasons, and an explicit no-relevant-memory outcome.
+      <span class="pill">later milestone</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_retrieval_metadata.py tests/integration/test_no_memory.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Serialized context contains only complete memories, never exceeds the supplied allowance, and reports the
+      tokenizer and actual token count.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/regression/test_context_budget.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Current-state, historical, supersession, expiration, and forgetting behavior matches the approved lifecycle
+      rules; deleted memories are never retrievable.
+      <span class="pill">later milestones</span>
+      <span class="note">Proof: <code>python -m pytest tests/regression/test_lifecycle.py tests/regression/test_forgetting.py -q</code>.</span>
+    </span></div>
+
+    <p><b>Phase 9 · Evaluation Systems</b></p>
+    <p class="note"><b>Canonical gate:</b> Golden dataset exists. 3-level eval plan written
+       (component / integration / production). LLM-as-judge calibrated. Regression suite runs on every deploy.
+       <br /><b>Source:</b> <code>agentic-swe-master/SKILL.md → Phase 9: Evaluation Systems</code>
+       <br /><b>Scope:</b> Only component and integration evaluation apply. Production evaluation, deployment gates,
+       and LLM judging are excluded.</p>
+    <div class="gate"><span class="box"></span><span class="label">
+      The six fixed workload cases remain present and unchanged as the comparison workload.
+      <span class="pill">existing artifact</span>
+      <span class="note">Proof: inspect <code>experiments/naive_baseline/workload/</code> and
+      <code>experiments/baseline_protocol.md</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Each approved prototype behavior has an automated characterization or regression test before its production
+      replacement is accepted.
+      <span class="pill">incremental</span>
+      <span class="note">Proof: <code>python -m pytest tests/regression -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      The integrated system runs all six cases and records reproducible PASS, PARTIAL, or FAIL evidence without
+      claiming production readiness.
+      <span class="pill">final evaluation milestone</span>
+      <span class="note">Proof: <code>python -m pytest tests/evaluation -q</code>.</span>
+    </span></div>
+
+    <p><b>Phase 12 · Reliability Engineering</b></p>
+    <p class="note"><b>Canonical gate:</b> Every outbound call has circuit breaker + timeout + retry with idempotency.
+       Checkpointing strategy allows resumption after crash. No operation has side effects on retry that it didn't
+       have on first execution.
+       <br /><b>Source:</b> <code>agentic-swe-master/SKILL.md → Phase 12: Reliability Engineering</code>
+       <br /><b>Scope:</b> There are no remote outbound runtime calls. Local reliability uses transactions, explicit
+       indexing state, write serialization, idempotency, restart persistence, and reconciliation.</p>
+    <div class="gate"><span class="box"></span><span class="label">
+      Retrying admission with the same <code>(user_id, idempotency_key)</code> returns the same memory ID without
+      creating another SQLite row or FAISS vector.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_idempotent_admission.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      A committed SQLite record remains non-retrievable when FAISS insertion or durable save fails and reports a
+      retryable pending or failed indexing state.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_partial_index_failure.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      A process restart loads the same SQLite record and FAISS mapping and preserves authorized retrieval behavior.
+      <span class="pill wip">first slice</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_restart_persistence.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Missing, damaged, or inconsistent FAISS state is rebuilt from SQLite without duplicate mappings, and
+      unrecoverable inconsistency prevents unsafe startup.
+      <span class="pill">later recovery milestone</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_recovery.py -q</code>.</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      Authorized forgetting becomes immediately non-retrievable, remains idempotent through partial cleanup failure,
+      and does not reactivate older superseded state.
+      <span class="pill">later forgetting milestone</span>
+      <span class="note">Proof: <code>python -m pytest tests/integration/test_forgetting.py -q</code>.</span>
+    </span></div>
+
+    <p><b>Cross-phase verification</b></p>
+    <div class="gate"><span class="box"></span><span class="label">
+      The complete applicable automated suite passes with <code>python -m pytest tests -q</code>, and no
+      <code>context-graph.json</code> invariant is violated.
+      <span class="pill">each milestone</span>
+    </span></div>
+    <div class="gate"><span class="box"></span><span class="label">
+      A separate L4 verifier returns APPROVE using the milestone's exact demo and verification commands.
+      <span class="pill">each milestone</span>
+    </span></div>
+
+    <p class="note">A milestone is DONE only when every applicable box for that milestone is checked by the
+       separate verifier. Later-milestone boxes do not block an earlier slice, but all boxes must pass before the
+       integrated project is complete. Canonical clauses explicitly excluded by the approved scope are retained
+       above for traceability and are not silently converted into implementation requirements.</p>
   </div>
 
   <!-- ───────────── IMPLEMENTATION PLAN ───────────── -->

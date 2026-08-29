@@ -16,13 +16,13 @@ Each durable memory is represented by the following logical record:
 
 | Field | Type | Required | Description |
 |---|---|---:|---|
-| `memory_id` | string | Yes | Unique identifier for the memory. Also used as the FAISS vector ID. |
+| `memory_id` | string | Yes | Unique logical identifier for the memory. D4 prototypes sometimes used it directly as a FAISS ID; the integrated package uses a separate signed-int64 `vector_id` mapping. |
 | `user_id` | string | Yes | Owner/tenant identity. Used as a hard retrieval boundary. |
 | `content` | string | Yes | Natural-language statement representing the memory. |
 | `embedding` | vector<float32> | Yes | Semantic representation used for candidate retrieval. Dimension is 768 in the current implementation. |
 | `type` | string | Yes | Controlled memory category determined by the memory extraction/admission layer. |
 | `provenance` | object | Yes | Evidence/source information, including whether the memory came from an explicit user statement or inference. |
-| `created_at` | timestamp | Yes | Time at which the memory record was created. |
+| `created_at` | timestamp | Yes | Time at which the memory record was created, supplied by the trusted UTC clock rather than caller provenance. |
 | `lifecycle_status` | enum | Yes | Current lifecycle state of the memory. |
 | `subject` | string | No | Structured subject when the memory naturally has one. |
 | `value` | string/object | No | Structured value when useful for the memory. |
@@ -137,6 +137,34 @@ forgetting.
 
 Those properties are represented separately in the memory metadata.
 
+### Integrated-package persistence fields
+
+The preceding record is the D4 logical model. The integrated package additionally persists:
+
+| Field | Type | Description |
+|---|---|---|
+| `embedding_model` | string | Model name/version used to produce the stored embedding. |
+| `embedding_dimension` | integer | Stored vector dimension, validated against configuration and FAISS metadata. |
+| `indexing_state` | enum | Derived-index progress, separate from lifecycle state. |
+| `idempotency_key` | string | Normalized key unique within the trusted owner scope. |
+| `request_fingerprint` | string | SHA-256 digest used to distinguish an identical retry from a conflicting key reuse. |
+
+Allowed indexing states are:
+
+```text
+pending
+indexed
+failed
+```
+
+SQLite also stores a one-to-one mapping between the string `memory_id`
+and a positive signed-int64 `vector_id`. FAISS contains the `vector_id`;
+the domain identifier is never coerced into an integer.
+
+The exact integrated-package normalization, state-transition, and
+persistence rules are defined by
+`.genesis/decisions/M1-implementation-bindings.md`.
+
 ---
 
 ## 7. Example Memory
@@ -173,4 +201,5 @@ Those properties are represented separately in the memory metadata.
 6. Forgotten memories cannot be returned by retrieval.
 7. Explicit provenance has higher authority than inferred provenance.
 8. Historical state is preserved when a memory is superseded.
-9. The memory_id, metadata record, and FAISS vector ID must remain consistently mapped.
+9. The string `memory_id`, authoritative SQLite record, signed-int64 `vector_id`, and FAISS entry must remain consistently mapped.
+10. Caller timestamps are provenance only; creation time and default lifecycle time come from the trusted UTC clock.

@@ -15,6 +15,26 @@ The contracts describe the operations required by the D4 design:
 Authentication, transport, deployment, and production API infrastructure are
 outside the current D4 scope.
 
+### Integrated-package boundary
+
+The JSON examples below are retained as D4 logical-contract evidence.
+They are not the concrete identity-transport contract for the later
+integrated package.
+
+The first integrated slice exposes synchronous Python operations:
+
+```text
+admit(context: RequestContext, request: AdmissionRequest) -> AdmissionResult
+retrieve(context: RequestContext, request: RetrievalRequest) -> RetrievalResult
+```
+
+The authoritative `user_id` and request ID come from the separate trusted
+`RequestContext`. Request payloads do not contain an authoritative
+`user_id`. Admission also requires an idempotency key whose uniqueness is
+scoped by the trusted `(user_id, idempotency_key)` database key. Exact
+normalization and conflict behavior are defined in
+`.genesis/decisions/M1-implementation-bindings.md`.
+
 ---
 
 ## 1. Store Memory
@@ -53,8 +73,9 @@ Store an admitted durable memory for a user.
 ### Rules
 
 - The memory must pass admission/privacy checks before durable storage.
-- Sensitive information rejected by admission must not be stored.
-- `user_id` identifies the owner of the memory.
+- Sensitive information rejected by admission must not be embedded, stored,
+  mapped, or added to FAISS.
+- In the integrated package, trusted `RequestContext.user_id` identifies the owner.
 - A 768-dimensional float32 embedding is generated for durable memory.
 - Conflict resolution determines whether the new memory supersedes an
   existing memory.
@@ -215,7 +236,10 @@ unrelated memory into the response.
 
 ## 7. Security Boundary
 
-`user_id` is an authorization boundary, not merely a search filter.
+`user_id` is an authorization boundary, not merely a search filter. The D4
+examples show it inline to express the logical operation, while the integrated
+package obtains it only from `RequestContext`. A `user_id` found inside a
+payload or conversation cannot override that context.
 
 The retrieval flow is conceptually:
 

@@ -74,3 +74,7 @@ Any cross-user disclosure, sensitive-memory retention, retrieval of deleted or i
 - The initial local workload is small enough for one process and serialized admission, deletion, and recovery writes to remain adequate until measurements show otherwise.
 - The calling application establishes a trustworthy user identity before creating `RequestContext`.
 - The fixed workload and real-component restart tests provide sufficient evidence for the integrated pre-production milestone, but not for production readiness.
+
+## Binding implementation decision records
+
+- [`M1-implementation-bindings`](M1-implementation-bindings.md) — package, idempotency, credential-admission, SQLite/FAISS persistence, indexing-state, and exact context-serialization bindings for the integrated M1 slice.

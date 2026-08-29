@@ -42,7 +42,11 @@ Logical exclusion is still necessary, but I also want to remove the correspondin
 
 ### Option 3 — Rebuild the complete FAISS index after every deletion
 
-I rejected this because we already use `memory_id` with `IndexIDMap2`, so targeted deletion is available. Rebuilding the whole index for every forget operation would add unnecessary work and complexity.
+I rejected this because `IndexIDMap2` makes targeted deletion available.
+D4 prototypes used `memory_id` directly as the FAISS identifier. The
+later integrated package instead maps the string `memory_id` to a stable
+signed-int64 `vector_id`; targeted deletion operates on that mapped ID.
+Rebuilding the whole index for every forget operation would add unnecessary work and complexity.
 
 ### Option 4 — Logical exclusion first, then targeted FAISS deletion
 
@@ -114,9 +118,11 @@ If FAISS deletion fails, the memory must still remain unavailable through normal
 
 ### 5. Targeted FAISS deletion
 
-I will remove only the affected `memory_id` from the FAISS index rather than rebuilding the entire index.
+I will remove only the affected mapped `vector_id` from the FAISS index
+rather than rebuilding the entire index.
 
-This is tied to the current `IndexIDMap2` design and should be revisited if the index architecture changes later.
+This is tied to the `IndexIDMap2` design and the authoritative SQLite
+`memory_id`/`vector_id` mapping and should be revisited if the index architecture changes later.
 
 ### 6. Idempotency
 
@@ -152,6 +158,23 @@ I will keep this at the admission layer rather than changing the core memory rep
 The Phase 8 policy test also confirmed that temporary and uncertain information can be kept separate from normal durable memory.
 
 This is currently a policy-level validation, not an integrated extraction/admission pipeline.
+
+For the later integrated M1 package, the minimum deterministic credential
+policy is fixed in
+`.genesis/decisions/M1-implementation-bindings.md`. It covers private-key
+headers, labeled passwords and passcodes, labeled API/secret keys,
+labeled access/refresh tokens, and `sk-…` API-key forms, together with
+specified near-miss cases.
+
+That policy is intentionally a minimum credential policy, not general
+secret or PII detection. A match, or inability to execute the check
+safely, rejects admission before embedding. Rejection produces no
+SQLite row, vector mapping, temporary or final FAISS write, or in-memory
+FAISS mutation.
+
+The integrated package also takes authoritative identity from a separate
+trusted `RequestContext`; identity inside request content remains
+untrusted. Forgetting itself remains a later M7 implementation concern.
 
 ### 9. Auditability
 

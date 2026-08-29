@@ -1,11 +1,11 @@
 # CURRENT
 - active_loop: NONE
-- target: <milestone-id>
+- target: M1
 - iteration: 0
-- last_gate: —
-- last_action: project genesis scaffolded; no milestone started
-- next_action: run G0 existence pre-flight on M1
-- model: gpt-5.6-sol
+- last_gate: G0 (passed — UNBUILT)
+- last_action: completed M1 existence pre-flight and bound the approved pre-BUILD decisions and document corrections
+- next_action: obtain or confirm the exact runtime maker-model identifier, set active_loop to BUILD, and begin M1 L1 iteration 1
+- model: UNBOUND
 - tokens_used: 0
 - tokens_budget: 50000
 - skills_loaded: []

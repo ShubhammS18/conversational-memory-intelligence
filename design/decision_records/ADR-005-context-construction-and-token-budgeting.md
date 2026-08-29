@@ -146,8 +146,39 @@ This replaces the earlier experimental approximation:
 len(text.split())
 ```
 
-The exact tokenizer/model pairing should be revisited when the final
-model is fixed.
+That statement records the D4 prototype decision. The later Genesis
+implementation decision fixes `cl100k_base` as the exact tokenizer for
+the first integrated reference implementation. This is tokenizer-only
+use and does not introduce response generation or an external LLM call.
+
+### Integrated-package serialization
+
+The integrated M1 package serializes each complete memory exactly as:
+
+```text
+Memory <memory_id>:
+<content>
+```
+
+The label is literal ASCII, the colon is followed by one LF, blocks are
+separated by two LFs, and the final context has no leading or trailing
+separator. Empty context is the empty string.
+
+For each ranked candidate, the implementation constructs the entire
+prospective serialized context and counts:
+
+```python
+len(tiktoken.get_encoding("cl100k_base").encode(prospective_context))
+```
+
+This count includes labels, separators, formatting, and cross-boundary
+tokenization. A memory is included only as a complete block. If it does
+not fit, it receives `budget_exceeded` and later smaller candidates may
+still be considered. Partial truncation is forbidden.
+
+These integrated-package details supplement, rather than rewrite, the
+earlier D4 prototype evidence. Their binding record is
+`.genesis/decisions/M1-implementation-bindings.md`.
 
 ### Response reservation
 
@@ -230,8 +261,8 @@ This is an explicit engineering trade-off, not a claim that greedy selection is 
 -   Greedy selection can be suboptimal.
 -   The configured memory/response budget needs validation for the final
     model and workload.
--   `cl100k_base` is a prototype tokenizer choice rather than a final
-    model-specific contract.
+-   `cl100k_base` was a prototype choice in D4 and is now the explicit
+    tokenizer contract for the first integrated reference implementation.
 -   Actual prompt token usage also includes system instructions, the
     query, formatting, and other context.
 -   A strict budget can result in no memory being selected when a useful

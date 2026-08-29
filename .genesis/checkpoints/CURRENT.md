@@ -1,11 +1,11 @@
 # CURRENT
-- active_loop: NONE
+- active_loop: BUILD
 - target: M1
-- iteration: 0
-- last_gate: G0 (passed — UNBUILT)
-- last_action: completed M1 existence pre-flight and bound the approved pre-BUILD decisions and document corrections
-- next_action: obtain or confirm the exact runtime maker-model identifier, set active_loop to BUILD, and begin M1 L1 iteration 1
-- model: UNBOUND
+- iteration: 1
+- last_gate: G4 (passed)
+- last_action: added and verified the installable package skeleton, CLI help, and four architecture tests; all requested checks pass
+- next_action: await review of iteration 1 before extending M1 beyond the approved packaging first step
+- model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000
-- skills_loaded: []
+- skills_loaded: [genesis, agentic-swe-master, modular-architecture, production-readiness]

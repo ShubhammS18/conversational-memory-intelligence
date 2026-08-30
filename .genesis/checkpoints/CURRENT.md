@@ -1,11 +1,11 @@
 # CURRENT
 - active_loop: BUILD
 - target: M1
-- iteration: 1
+- iteration: 2
 - last_gate: G4 (passed)
-- last_action: added and verified the installable package skeleton, CLI help, and four architecture tests; all requested checks pass
-- next_action: await review of iteration 1 before extending M1 beyond the approved packaging first step
+- last_action: implemented and verified the standard-library-only domain records and deterministic M1 policies with 46 domain tests
+- next_action: await review of iteration 2 before extending M1 beyond the approved pure-domain scope
 - model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000
-- skills_loaded: [genesis, agentic-swe-master, modular-architecture, production-readiness]
+- skills_loaded: [genesis, agentic-swe-master, modular-architecture, security-engineering]

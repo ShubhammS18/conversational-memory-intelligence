@@ -8,7 +8,13 @@ from .contracts import (
     PersistedPendingMemory,
     RequestContext,
 )
-from .errors import IndexingError, StorageError, ValidationError
+from .errors import (
+    ConfigurationMismatchError,
+    IndexingError,
+    ServiceUnavailableError,
+    StorageError,
+    ValidationError,
+)
 from .ports import (
     ClockPort,
     EmbeddingPort,
@@ -23,6 +29,7 @@ __all__ = [
     "AdmissionRequest",
     "AdmissionResult",
     "ClockPort",
+    "ConfigurationMismatchError",
     "Embedding",
     "EmbeddingPort",
     "ExistingAdmission",
@@ -33,6 +40,7 @@ __all__ = [
     "MemoryService",
     "PersistedPendingMemory",
     "RequestContext",
+    "ServiceUnavailableError",
     "StorageError",
     "ValidationError",
     "VectorIndexPort",

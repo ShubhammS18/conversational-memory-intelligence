@@ -3,8 +3,8 @@
 - target: M1
 - iteration: 4
 - last_gate: G4 (passed)
-- last_action: implemented and verified iteration 4A SQLite persistence with 12 infrastructure integration tests; 82 tests pass
-- next_action: await review of iteration 4A before implementing durable FAISS generation handling
+- last_action: implemented and verified iteration 4B durable FAISS generations with 34 focused FAISS tests; 116 tests pass
+- next_action: await review of iteration 4B before integrating the SQLite and FAISS adapters
 - model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000

@@ -19,3 +19,11 @@ class StorageError(ApplicationError):
 
 class IndexingError(ApplicationError):
     """Embedding-index persistence could not complete an operation."""
+
+
+class ConfigurationMismatchError(ApplicationError):
+    """Persisted infrastructure metadata conflicts with approved configuration."""
+
+
+class ServiceUnavailableError(ApplicationError):
+    """Infrastructure cannot start without violating a safety invariant."""

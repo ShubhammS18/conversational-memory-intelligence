@@ -107,6 +107,9 @@ def test_pyproject_is_the_integrated_dependency_authority() -> None:
     assert set(configuration["project"]["optional-dependencies"]["dev"]) == DEV_DEPENDENCIES
     assert configuration["tool"]["setuptools"]["package-dir"] == {"": "src"}
     assert configuration["tool"]["setuptools"]["packages"]["find"]["where"] == ["src"]
+    assert configuration["tool"]["setuptools"]["package-data"] == {
+        "conversational_memory.infrastructure.sqlite": ["migrations/*.sql"]
+    }
     assert "requirements.txt" not in pyproject_text
 
     assert (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines() == [

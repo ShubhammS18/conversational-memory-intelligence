@@ -1,10 +1,10 @@
 # CURRENT
 - active_loop: BUILD
 - target: M1
-- iteration: 3
-- last_gate: G4 (passed)
-- last_action: implemented and verified the application-layer admission workflow with 20 focused tests; 70 architecture, domain, and application tests pass
-- next_action: await review of iteration 3 before adding concrete M1 infrastructure adapters
+- iteration: 4
+- last_gate: pre-iteration 4 high-risk checkpoint (passed)
+- last_action: recorded clean baseline `15b1b7f27eeb6f351d0738d157d28623737d6a1c` with 70 passing tests before high-risk infrastructure work
+- next_action: await approval before implementing concrete SQLite persistence and durable FAISS generation handling
 - model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000

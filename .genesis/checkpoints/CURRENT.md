@@ -1,10 +1,10 @@
 # CURRENT
 - active_loop: BUILD
 - target: M1
-- iteration: 2
+- iteration: 3
 - last_gate: G4 (passed)
-- last_action: implemented and verified the standard-library-only domain records and deterministic M1 policies with 46 domain tests
-- next_action: await review of iteration 2 before extending M1 beyond the approved pure-domain scope
+- last_action: implemented and verified the application-layer admission workflow with 20 focused tests; 70 architecture, domain, and application tests pass
+- next_action: await review of iteration 3 before adding concrete M1 infrastructure adapters
 - model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000

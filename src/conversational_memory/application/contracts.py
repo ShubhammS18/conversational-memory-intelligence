@@ -70,11 +70,32 @@ class AdmissionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class IndexingWork:
+    """Stored inputs required to retry indexing without recomputation."""
+
+    memory_id: str
+    vector_id: int
+    embedding: Embedding
+
+    def __post_init__(self) -> None:
+        if not self.memory_id.strip():
+            raise ValueError("memory_id must not be empty")
+        if (
+            isinstance(self.vector_id, bool)
+            or not isinstance(self.vector_id, int)
+            or self.vector_id <= 0
+            or self.vector_id > 2**63 - 1
+        ):
+            raise ValueError("vector_id must be a positive signed-int64 integer")
+
+
+@dataclass(frozen=True, slots=True)
 class ExistingAdmission:
     """Owner-scoped idempotency record returned by the lookup port."""
 
     request_fingerprint: str
     result: AdmissionResult
+    indexing_work: IndexingWork | None = None
 
 
 @dataclass(frozen=True, slots=True)

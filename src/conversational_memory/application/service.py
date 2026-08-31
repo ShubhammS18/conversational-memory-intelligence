@@ -21,7 +21,13 @@ from conversational_memory.domain.models import (
     Provenance,
 )
 
-from .contracts import AdmissionRequest, AdmissionResult, RequestContext
+from .contracts import (
+    AdmissionRequest,
+    AdmissionResult,
+    Embedding,
+    ExistingAdmission,
+    RequestContext,
+)
 from .errors import IndexingError, StorageError, ValidationError
 from .ports import (
     ClockPort,
@@ -65,7 +71,9 @@ class MemoryService:
         if existing is not None:
             if existing.request_fingerprint != fingerprint:
                 raise ValidationError("idempotency_key_conflict")
-            return existing.result
+            if existing.result.indexing_state is IndexingState.INDEXED:
+                return existing.result
+            return self._retry_indexing(context, existing)
 
         policy_result = evaluate_credential_admission(fingerprint_input)
         if policy_result.decision is not AdmissionDecision.ACCEPTED:
@@ -88,17 +96,51 @@ class MemoryService:
             request_fingerprint=fingerprint,
         )
 
-        try:
-            self._vector_index.add(
-                vector_id=persisted.vector_id,
-                embedding=embedding,
+        return self._index_and_acknowledge(
+            context=context,
+            memory_id=persisted.memory.memory_id,
+            vector_id=persisted.vector_id,
+            embedding=embedding,
+        )
+
+    def _retry_indexing(
+        self,
+        context: RequestContext,
+        existing: ExistingAdmission,
+    ) -> AdmissionResult:
+        work = existing.indexing_work
+        if work is None or existing.result.memory_id != work.memory_id:
+            raise StorageError("Stored indexing work is unavailable")
+        if existing.result.indexing_state is IndexingState.FAILED:
+            self._repository.mark_pending(
+                user_id=context.user_id,
+                memory_id=work.memory_id,
             )
+        elif existing.result.indexing_state is not IndexingState.PENDING:
+            raise StorageError("Stored indexing state cannot be retried")
+        return self._index_and_acknowledge(
+            context=context,
+            memory_id=work.memory_id,
+            vector_id=work.vector_id,
+            embedding=work.embedding,
+        )
+
+    def _index_and_acknowledge(
+        self,
+        *,
+        context: RequestContext,
+        memory_id: str,
+        vector_id: int,
+        embedding: Embedding,
+    ) -> AdmissionResult:
+        try:
+            self._vector_index.add(vector_id=vector_id, embedding=embedding)
         except IndexingError as error:
-            indexing_state = self._record_indexing_failure(context, persisted.memory, error)
+            indexing_state = self._record_indexing_failure(context, memory_id, error)
             return AdmissionResult(
                 decision=AdmissionDecision.ACCEPTED,
                 reason="indexing_failed",
-                memory_id=persisted.memory.memory_id,
+                memory_id=memory_id,
                 indexing_state=indexing_state,
                 retrievable=False,
                 retryable_error=str(error),
@@ -107,13 +149,13 @@ class MemoryService:
         try:
             self._repository.mark_indexed(
                 user_id=context.user_id,
-                memory_id=persisted.memory.memory_id,
+                memory_id=memory_id,
             )
         except StorageError as error:
             return AdmissionResult(
                 decision=AdmissionDecision.ACCEPTED,
                 reason="indexing_acknowledgement_failed",
-                memory_id=persisted.memory.memory_id,
+                memory_id=memory_id,
                 indexing_state=IndexingState.PENDING,
                 retrievable=False,
                 retryable_error=str(error),
@@ -122,7 +164,7 @@ class MemoryService:
         return AdmissionResult(
             decision=AdmissionDecision.ACCEPTED,
             reason="accepted_and_indexed",
-            memory_id=persisted.memory.memory_id,
+            memory_id=memory_id,
             indexing_state=IndexingState.INDEXED,
             retrievable=True,
         )
@@ -194,13 +236,13 @@ class MemoryService:
     def _record_indexing_failure(
         self,
         context: RequestContext,
-        memory: MemoryRecord,
+        memory_id: str,
         error: IndexingError,
     ) -> IndexingState:
         try:
             self._repository.mark_failed(
                 user_id=context.user_id,
-                memory_id=memory.memory_id,
+                memory_id=memory_id,
                 reason=str(error),
             )
         except StorageError:

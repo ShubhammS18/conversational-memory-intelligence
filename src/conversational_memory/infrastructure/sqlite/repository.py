@@ -16,6 +16,7 @@ from conversational_memory.application.contracts import (
     AdmissionResult,
     Embedding,
     ExistingAdmission,
+    IndexingWork,
     PersistedPendingMemory,
 )
 from conversational_memory.application.errors import StorageError
@@ -46,22 +47,32 @@ class SQLiteMemoryRepository:
             with self._connection() as connection:
                 row = connection.execute(
                     """
-                    SELECT m.*, i.request_fingerprint
+                    SELECT m.*, i.request_fingerprint,
+                           e.embedding_blob, e.embedding_model, e.embedding_dimension,
+                           v.vector_id
                     FROM admission_idempotency AS i
                     JOIN memories AS m ON m.memory_id = i.memory_id AND m.user_id = i.user_id
+                    JOIN memory_embeddings AS e ON e.memory_id = m.memory_id
+                    JOIN memory_vector_mappings AS v ON v.memory_id = m.memory_id
                     WHERE i.user_id = ? AND i.idempotency_key = ?
                     """,
                     (user_id, idempotency_key),
                 ).fetchone()
-        except sqlite3.Error as error:
+            if row is None:
+                return None
+            memory = _row_to_memory(row)
+            indexing_work = IndexingWork(
+                memory_id=memory.memory_id,
+                vector_id=int(row["vector_id"]),
+                embedding=_row_to_embedding(row),
+            )
+        except (sqlite3.Error, ValueError, TypeError, struct.error) as error:
             raise StorageError("SQLite idempotency lookup failed") from error
 
-        if row is None:
-            return None
-        memory = _row_to_memory(row)
         return ExistingAdmission(
             request_fingerprint=str(row["request_fingerprint"]),
             result=_result_for(memory, _optional_text(row["indexing_error"])),
+            indexing_work=indexing_work,
         )
 
     def persist_pending(
@@ -140,7 +151,17 @@ class SQLiteMemoryRepository:
         self._transition(
             user_id=user_id,
             memory_id=memory_id,
+            expected=IndexingState.PENDING,
             target=IndexingState.INDEXED,
+            reason=None,
+        )
+
+    def mark_pending(self, *, user_id: str, memory_id: str) -> None:
+        self._transition(
+            user_id=user_id,
+            memory_id=memory_id,
+            expected=IndexingState.FAILED,
+            target=IndexingState.PENDING,
             reason=None,
         )
 
@@ -148,6 +169,7 @@ class SQLiteMemoryRepository:
         self._transition(
             user_id=user_id,
             memory_id=memory_id,
+            expected=IndexingState.PENDING,
             target=IndexingState.FAILED,
             reason=reason,
         )
@@ -157,6 +179,7 @@ class SQLiteMemoryRepository:
         *,
         user_id: str,
         memory_id: str,
+        expected: IndexingState,
         target: IndexingState,
         reason: str | None,
     ) -> None:
@@ -168,9 +191,9 @@ class SQLiteMemoryRepository:
                         """
                         UPDATE memories
                         SET indexing_state = ?, indexing_error = ?
-                        WHERE user_id = ? AND memory_id = ? AND indexing_state = 'pending'
+                        WHERE user_id = ? AND memory_id = ? AND indexing_state = ?
                         """,
-                        (target.value, reason, user_id, memory_id),
+                        (target.value, reason, user_id, memory_id, expected.value),
                     )
                     if cursor.rowcount != 1:
                         raise StorageError("SQLite indexing-state transition rejected")
@@ -245,6 +268,18 @@ def _row_to_memory(row: sqlite3.Row) -> MemoryRecord:
         valid_until=_optional_datetime(row["valid_until"]),
         supersedes=tuple(json.loads(str(row["supersedes_json"]))),
         superseded_by=_optional_text(row["superseded_by"]),
+    )
+
+
+def _row_to_embedding(row: sqlite3.Row) -> Embedding:
+    dimension = int(row["embedding_dimension"])
+    blob = bytes(row["embedding_blob"])
+    if len(blob) != dimension * 4:
+        raise StorageError("SQLite embedding BLOB length does not match its dimension")
+    return Embedding(
+        values=tuple(struct.unpack(f"<{dimension}f", blob)),
+        model_id=str(row["embedding_model"]),
+        dimension=dimension,
     )
 
 

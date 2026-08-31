@@ -5,6 +5,7 @@ from .contracts import (
     AdmissionResult,
     Embedding,
     ExistingAdmission,
+    IndexingWork,
     PersistedPendingMemory,
     RequestContext,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "ExistingAdmission",
     "IdempotencyPort",
     "IndexingError",
+    "IndexingWork",
     "MemoryIdPort",
     "MemoryRepositoryPort",
     "MemoryService",

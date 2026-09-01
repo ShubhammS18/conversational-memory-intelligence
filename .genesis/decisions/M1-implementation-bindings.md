@@ -20,6 +20,18 @@ Read-only preflight observed the active interpreter at `.venv/Scripts/python.exe
 
 The existing `requirements.txt` remains unchanged legacy/prototype history. It is not authoritative for the integrated package and must not override `pyproject.toml`.
 
+### M1 SentenceTransformer binding
+
+The canonical load name is `sentence-transformers/all-mpnet-base-v2` at immutable revision `e8c3b32edf5434bc2275fc9bab85f82640a19130`. The persisted model ID is `sentence-transformers/all-mpnet-base-v2@e8c3b32edf5434bc2275fc9bab85f82640a19130`; SQLite embedding rows, `Embedding.model_id`, configured FAISS metadata, and FAISS startup validation must use that exact string. The shorter existing name `all-mpnet-base-v2` remains descriptive project terminology and is not the persisted identity. New real-model stores use the revision-qualified identity. Existing stores with another identity must fail closed and must never be migrated or relabeled silently.
+
+M1 loads the model on CPU only and only from the approved cache root supplied as configuration. For the current M1 workstation proof that root is `C:\Users\Asus\.cache\huggingface\hub`. Construct SentenceTransformers with the canonical load name, immutable revision, configured cache root, `device="cpu"`, and `local_files_only=True`. Missing or incomplete cached files must fail startup without downloading, selecting another revision, or using another model, cache, or device.
+
+Encode one normalized input with `convert_to_numpy=True`, `normalize_embeddings=True`, `precision="float32"`, `device="cpu"`, and progress output disabled. Convert the result explicitly to float32 and require one finite vector with shape `(768,)` and nonzero L2 norm. The returned float32 vector must be L2-normalized; validate its norm with relative tolerance `1e-5` and absolute tolerance `1e-6`.
+
+An incompatible loaded dimension raises `ConfigurationMismatchError`. An ordinary model/cache loading failure raises `ServiceUnavailableError`. An ordinary encoding failure or malformed, non-finite, incorrectly shaped, or non-normalized output raises `IndexingError`. Do not catch `KeyboardInterrupt` or `SystemExit`, and do not fall back to another model, revision, cache, device, or unnormalized output.
+
+M1 completion explicitly requires `tests/integration/test_real_model_first_slice.py::test_real_model_restart_owner_scope_and_bounded_context`, marked `real_model`. It must use the cached immutable model, real SQLite, real persisted FAISS, and real `cl100k_base`; a missing cache is a failed prerequisite, not a skipped or mocked pass. Routine tests exclude the marker and the real-model gate runs it explicitly.
+
 ## 2. Trusted identity and idempotency
 
 The public boundary is `admit(context, request)`. `RequestContext.user_id` is established by the caller and is the only authoritative identity. A `user_id` in content or request data is untrusted text. The body excludes `user_id`; SQLite nevertheless uses the trusted context value in the unique database key `(user_id, idempotency_key)` and in every owner-scoped operation.

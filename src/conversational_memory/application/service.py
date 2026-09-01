@@ -27,8 +27,11 @@ from .contracts import (
     Embedding,
     ExistingAdmission,
     RequestContext,
+    RetrievalRequest,
+    RetrievalResult,
+    RetrievedMemory,
 )
-from .errors import IndexingError, StorageError, ValidationError
+from .errors import AuthorizationError, IndexingError, StorageError, ValidationError
 from .ports import (
     ClockPort,
     EmbeddingPort,
@@ -103,6 +106,48 @@ class MemoryService:
             embedding=embedding,
         )
 
+    def retrieve(
+        self,
+        context: RequestContext,
+        request: RetrievalRequest,
+    ) -> RetrievalResult:
+        """Retrieve only owner-authorized indexed memories through a scoped FAISS search."""
+        self._validate_context(context)
+        query, limit = self._validate_retrieval_request(request)
+        allowed_vector_ids = self._repository.eligible_vector_ids(user_id=context.user_id)
+        if not allowed_vector_ids:
+            return RetrievalResult(memories=())
+
+        query_embedding = self._embedder.embed(query)
+        hits = self._vector_index.search(
+            embedding=query_embedding,
+            allowed_vector_ids=allowed_vector_ids,
+            limit=limit,
+        )
+        allowed = set(allowed_vector_ids)
+        if any(hit.vector_id not in allowed for hit in hits):
+            raise AuthorizationError("unauthorized_retrieval_result")
+
+        hydrated = self._repository.hydrate_indexed(
+            user_id=context.user_id,
+            vector_ids=tuple(hit.vector_id for hit in hits),
+        )
+        memories_by_vector_id = {item.vector_id: item.memory for item in hydrated}
+        if len(memories_by_vector_id) != len(hits):
+            raise AuthorizationError("unauthorized_retrieval_result")
+
+        selected: list[RetrievedMemory] = []
+        for hit in hits:
+            memory = memories_by_vector_id.get(hit.vector_id)
+            if (
+                memory is None
+                or memory.user_id != context.user_id
+                or memory.indexing_state is not IndexingState.INDEXED
+            ):
+                raise AuthorizationError("unauthorized_retrieval_result")
+            selected.append(RetrievedMemory(memory=memory, score=hit.score))
+        return RetrievalResult(memories=tuple(selected))
+
     def _retry_indexing(
         self,
         context: RequestContext,
@@ -175,6 +220,21 @@ class MemoryService:
             raise ValidationError("invalid_user_id")
         if not context.request_id.strip():
             raise ValidationError("invalid_request_id")
+
+    @staticmethod
+    def _validate_retrieval_request(request: RetrievalRequest) -> tuple[str, int]:
+        if not isinstance(request.query, str):
+            raise ValidationError("invalid_retrieval_query")
+        query = normalize_text(request.query)
+        if not query:
+            raise ValidationError("invalid_retrieval_query")
+        if (
+            isinstance(request.limit, bool)
+            or not isinstance(request.limit, int)
+            or request.limit <= 0
+        ):
+            raise ValidationError("invalid_retrieval_limit")
+        return query, request.limit
 
     @staticmethod
     def _canonicalize(

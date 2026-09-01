@@ -16,6 +16,7 @@ from conversational_memory.application.contracts import (
     AdmissionResult,
     Embedding,
     ExistingAdmission,
+    HydratedMemory,
     IndexingWork,
     PersistedPendingMemory,
 )
@@ -173,6 +174,54 @@ class SQLiteMemoryRepository:
             target=IndexingState.FAILED,
             reason=reason,
         )
+
+    def eligible_vector_ids(self, *, user_id: str) -> tuple[int, ...]:
+        """Return only vector IDs that SQLite authorizes for M1 retrieval."""
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT v.vector_id
+                    FROM memory_vector_mappings AS v
+                    JOIN memories AS m ON m.memory_id = v.memory_id
+                    WHERE m.user_id = ? AND m.indexing_state = 'indexed'
+                    ORDER BY v.vector_id
+                    """,
+                    (user_id,),
+                ).fetchall()
+            return tuple(int(row["vector_id"]) for row in rows)
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise StorageError("SQLite eligible-vector lookup failed") from error
+
+    def hydrate_indexed(
+        self,
+        *,
+        user_id: str,
+        vector_ids: tuple[int, ...],
+    ) -> tuple[HydratedMemory, ...]:
+        """Hydrate requested mappings only when they remain owner-scoped and indexed."""
+        if not vector_ids:
+            return ()
+        placeholders = ",".join("?" for _ in vector_ids)
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT m.*, v.vector_id
+                    FROM memory_vector_mappings AS v
+                    JOIN memories AS m ON m.memory_id = v.memory_id
+                    WHERE m.user_id = ?
+                      AND m.indexing_state = 'indexed'
+                      AND v.vector_id IN ({placeholders})
+                    """,
+                    (user_id, *vector_ids),
+                ).fetchall()
+            return tuple(
+                HydratedMemory(vector_id=int(row["vector_id"]), memory=_row_to_memory(row))
+                for row in rows
+            )
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise StorageError("SQLite indexed-memory hydration failed") from error
 
     def _transition(
         self,

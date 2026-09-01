@@ -35,6 +35,14 @@ class AdmissionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievalRequest:
+    """Untrusted retrieval payload; authoritative identity is deliberately absent."""
+
+    query: str
+    limit: int
+
+
+@dataclass(frozen=True, slots=True)
 class Embedding:
     """Embedding output passed from the application to persistence and indexing ports."""
 
@@ -67,6 +75,48 @@ class AdmissionResult:
     indexing_state: IndexingState | None
     retrievable: bool
     retryable_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VectorSearchHit:
+    """One vector-index result expressed without infrastructure-specific types."""
+
+    vector_id: int
+    score: float
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.vector_id, bool)
+            or not isinstance(self.vector_id, int)
+            or self.vector_id <= 0
+            or self.vector_id > 2**63 - 1
+        ):
+            raise ValueError("vector_id must be a positive signed-int64 integer")
+        if not math.isfinite(self.score):
+            raise ValueError("score must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class HydratedMemory:
+    """An authoritative memory hydrated from its stable vector mapping."""
+
+    vector_id: int
+    memory: MemoryRecord
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedMemory:
+    """An owner-authorized memory selected by vector similarity."""
+
+    memory: MemoryRecord
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalResult:
+    """Ordered M1 retrieval output before context construction."""
+
+    memories: tuple[RetrievedMemory, ...]
 
 
 @dataclass(frozen=True, slots=True)

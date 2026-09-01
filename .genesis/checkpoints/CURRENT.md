@@ -1,11 +1,11 @@
 # CURRENT
 - active_loop: BUILD
 - target: M1
-- iteration: 4
+- iteration: 5
 - last_gate: G4 (passed)
-- last_action: implemented and verified iteration 4C SQLite–FAISS service integration with six real end-to-end tests; 122 tests pass
-- next_action: await review of iteration 4C before extending M1
+- last_action: implemented and verified iteration 5 owner-scoped indexed retrieval with 17 focused integration tests; 139 tests pass
+- next_action: await review of iteration 5 before extending M1
 - model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000
-- skills_loaded: [genesis, agentic-swe-master, data-systems-engineering, modular-architecture, production-readiness]
+- skills_loaded: [genesis, agentic-swe-master, modular-architecture, security-engineering, data-systems-engineering]

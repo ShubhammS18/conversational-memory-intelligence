@@ -13,6 +13,10 @@ class ValidationError(ApplicationError):
         super().__init__(reason)
 
 
+class AuthorizationError(ApplicationError):
+    """A result crossed the trusted owner boundary."""
+
+
 class StorageError(ApplicationError):
     """The authoritative store could not complete an operation."""
 

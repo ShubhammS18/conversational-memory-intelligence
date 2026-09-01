@@ -7,7 +7,13 @@ from typing import Protocol
 
 from conversational_memory.domain.models import MemoryRecord
 
-from .contracts import Embedding, ExistingAdmission, PersistedPendingMemory
+from .contracts import (
+    Embedding,
+    ExistingAdmission,
+    HydratedMemory,
+    PersistedPendingMemory,
+    VectorSearchHit,
+)
 
 
 class IdempotencyPort(Protocol):
@@ -44,11 +50,25 @@ class MemoryRepositoryPort(Protocol):
         self, *, user_id: str, memory_id: str, reason: str
     ) -> None: ...
 
+    def eligible_vector_ids(self, *, user_id: str) -> tuple[int, ...]: ...
+
+    def hydrate_indexed(
+        self, *, user_id: str, vector_ids: tuple[int, ...]
+    ) -> tuple[HydratedMemory, ...]: ...
+
 
 class VectorIndexPort(Protocol):
     """Durably add one stable vector identifier to the derived index."""
 
     def add(self, *, vector_id: int, embedding: Embedding) -> None: ...
+
+    def search(
+        self,
+        *,
+        embedding: Embedding,
+        allowed_vector_ids: tuple[int, ...],
+        limit: int,
+    ) -> tuple[VectorSearchHit, ...]: ...
 
 
 class ClockPort(Protocol):

@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import faiss
 import numpy as np
 
-from conversational_memory.application.contracts import Embedding
+from conversational_memory.application.contracts import Embedding, VectorSearchHit
 from conversational_memory.application.errors import (
     ConfigurationMismatchError,
     IndexingError,
@@ -107,6 +107,46 @@ class FaissVectorIndex:
                 candidate,
                 expected_vector_id=vector_id,
             )
+
+    def search(
+        self,
+        *,
+        embedding: Embedding,
+        allowed_vector_ids: tuple[int, ...],
+        limit: int,
+    ) -> tuple[VectorSearchHit, ...]:
+        """Search only the stable IDs authorized by the source store."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise IndexingError("FAISS result limit must be a positive integer")
+        for vector_id in allowed_vector_ids:
+            _validate_vector_id(vector_id)
+        if not allowed_vector_ids:
+            return ()
+
+        query = self._validated_vector(embedding)
+        selector_ids = np.asarray(allowed_vector_ids, dtype=np.int64)
+        selector = faiss.IDSelectorBatch(selector_ids)
+        parameters = faiss.SearchParameters()
+        parameters.sel = selector
+        with self._lock:
+            loaded_vector_ids = set(_index_vector_ids(self._index))
+            if not set(allowed_vector_ids).issubset(loaded_vector_ids):
+                raise ServiceUnavailableError(
+                    "FAISS index is missing an authorized vector ID"
+                )
+            try:
+                scores, vector_ids = self._index.search(
+                    query,
+                    min(limit, len(allowed_vector_ids)),
+                    params=parameters,
+                )
+            except RuntimeError as error:
+                raise IndexingError("FAISS scoped search failed") from error
+        return tuple(
+            VectorSearchHit(vector_id=int(vector_id), score=float(score))
+            for score, vector_id in zip(scores[0], vector_ids[0], strict=True)
+            if int(vector_id) != -1
+        )
 
     def _validated_vector(self, embedding: Embedding) -> np.ndarray[Any, np.dtype[np.float32]]:
         if embedding.model_id != self._embedding_model:

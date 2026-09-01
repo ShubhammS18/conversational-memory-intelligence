@@ -71,6 +71,15 @@ class VectorIndexPort(Protocol):
     ) -> tuple[VectorSearchHit, ...]: ...
 
 
+class TokenCounterPort(Protocol):
+    """Count exact tokens using the configured downstream tokenizer."""
+
+    @property
+    def tokenizer_id(self) -> str: ...
+
+    def count_tokens(self, text: str) -> int: ...
+
+
 class ClockPort(Protocol):
     """Provide trusted lifecycle time."""
 

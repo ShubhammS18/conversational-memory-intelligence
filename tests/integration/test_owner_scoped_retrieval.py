@@ -19,6 +19,10 @@ from conversational_memory.application import (
     VectorSearchHit,
 )
 from conversational_memory.composition import compose_memory_service
+from conversational_memory.domain.context import (
+    ContextExclusionReason,
+    serialize_memory_block,
+)
 from conversational_memory.domain.models import (
     EvidenceAuthority,
     IndexingState,
@@ -27,7 +31,11 @@ from conversational_memory.domain.models import (
     MemoryType,
     Provenance,
 )
-from conversational_memory.infrastructure import FaissVectorIndex, SQLiteMemoryRepository
+from conversational_memory.infrastructure import (
+    FaissVectorIndex,
+    SQLiteMemoryRepository,
+    TiktokenTokenCounter,
+)
 
 MODEL = "test-model"
 DIMENSION = 2
@@ -141,6 +149,7 @@ def _service(
         repository=repository,
         vector_index=vector_index,
         embedder=embedder,
+        token_counter=TiktokenTokenCounter(),
         clock=FixedClock(),
         memory_ids=SequentialMemoryIds(),
     )
@@ -241,13 +250,77 @@ def test_retrieval_searches_only_trusted_owner_indexed_ids(tmp_path: Path) -> No
 
     result = service.retrieve(
         RequestContext(user_id="user-1", request_id="retrieve-1"),
-        RetrievalRequest(query=" database query ", limit=5),
+        RetrievalRequest(query=" database query ", limit=5, token_budget=1000),
     )
 
     assert [item.memory.memory_id for item in result.memories] == [owner.result.memory_id]
     assert all(item.memory.user_id == "user-1" for item in result.memories)
+    assert result.context == serialize_memory_block(result.memories[0].memory)
+    assert result.tokenizer == "cl100k_base"
+    assert result.token_budget == 1000
+    assert result.tokens_used == TiktokenTokenCounter().count_tokens(result.context)
+    assert result.included_memory_ids == (owner.result.memory_id,)
+    assert result.exclusions == ()
     assert vector_index.allowed_ids == [(owner.indexing_work.vector_id,)]
     assert other.indexing_work.vector_id not in vector_index.allowed_ids[0]
+
+
+def test_service_ranking_skips_oversized_memory_and_continues_in_ranked_order(
+    tmp_path: Path,
+) -> None:
+    oversized_content = " ".join(["oversized memory"] * 100)
+    first_content = "alpha"
+    second_content = "beta"
+    embedder = MappingEmbedder(
+        {
+            oversized_content: (1.0, 0.0),
+            first_content: (0.9, 0.0),
+            second_content: (0.8, 0.0),
+            "query": (1.0, 0.0),
+        }
+    )
+    service, repository, _ = _service(tmp_path, embedder=embedder)
+    _admit(service, user_id="user-1", key="oversized", content=oversized_content)
+    _admit(service, user_id="user-1", key="first", content=first_content)
+    _admit(service, user_id="user-1", key="second", content=second_content)
+    oversized = repository.find(user_id="user-1", idempotency_key="oversized")
+    first = repository.find(user_id="user-1", idempotency_key="first")
+    second = repository.find(user_id="user-1", idempotency_key="second")
+    assert oversized is not None and oversized.result.memory_id is not None
+    assert first is not None and first.indexing_work is not None
+    assert second is not None and second.indexing_work is not None
+    first_memory = repository.hydrate_indexed(
+        user_id="user-1",
+        vector_ids=(first.indexing_work.vector_id,),
+    )[0].memory
+    second_memory = repository.hydrate_indexed(
+        user_id="user-1",
+        vector_ids=(second.indexing_work.vector_id,),
+    )[0].memory
+    expected_context = (
+        f"{serialize_memory_block(first_memory)}\n\n"
+        f"{serialize_memory_block(second_memory)}"
+    )
+    counter = TiktokenTokenCounter()
+    budget = counter.count_tokens(expected_context)
+
+    result = service.retrieve(
+        RequestContext(user_id="user-1", request_id="retrieve-ranked-budget"),
+        RetrievalRequest(query="query", limit=3, token_budget=budget),
+    )
+
+    expected_ids = (
+        first_memory.memory_id,
+        second_memory.memory_id,
+    )
+    assert tuple(item.memory.memory_id for item in result.memories) == expected_ids
+    assert result.context == expected_context
+    assert result.included_memory_ids == expected_ids
+    assert len(result.exclusions) == 1
+    assert result.exclusions[0].memory_id == oversized.result.memory_id
+    assert result.exclusions[0].reason is ContextExclusionReason.BUDGET_EXCEEDED
+    assert result.tokens_used == counter.count_tokens(expected_context)
+    assert result.tokens_used == budget
 
 
 def test_pending_and_failed_vectors_are_excluded_before_faiss_search(tmp_path: Path) -> None:
@@ -280,7 +353,7 @@ def test_pending_and_failed_vectors_are_excluded_before_faiss_search(tmp_path: P
 
     result = service.retrieve(
         RequestContext(user_id="user-1", request_id="retrieve-1"),
-        RetrievalRequest(query="query", limit=3),
+        RetrievalRequest(query="query", limit=3, token_budget=1000),
     )
 
     assert [item.memory.memory_id for item in result.memories] == ["indexed-memory"]
@@ -295,7 +368,7 @@ def test_empty_owner_allowlist_skips_embedding_and_faiss_search(tmp_path: Path) 
 
     result = service.retrieve(
         RequestContext(user_id="user-with-no-memory", request_id="retrieve-empty"),
-        RetrievalRequest(query="query", limit=5),
+        RetrievalRequest(query="query", limit=5, token_budget=1000),
     )
 
     assert result.memories == ()
@@ -328,7 +401,7 @@ def test_unexpected_faiss_id_is_rejected_before_hydration(tmp_path: Path) -> Non
     with pytest.raises(AuthorizationError, match="unauthorized_retrieval_result"):
         service.retrieve(
             RequestContext(user_id="user-1", request_id="retrieve-1"),
-            RetrievalRequest(query="query", limit=5),
+            RetrievalRequest(query="query", limit=5, token_budget=1000),
         )
 
     assert vector_index.allowed_ids == [(owner.indexing_work.vector_id,)]
@@ -348,7 +421,7 @@ def test_wholly_missing_authorized_faiss_id_fails_closed(tmp_path: Path) -> None
     with pytest.raises(ServiceUnavailableError, match="missing an authorized vector ID"):
         service.retrieve(
             RequestContext(user_id="user-1", request_id="retrieve-missing"),
-            RetrievalRequest(query="query", limit=5),
+            RetrievalRequest(query="query", limit=5, token_budget=1000),
         )
 
 
@@ -374,7 +447,7 @@ def test_partly_missing_authorized_faiss_ids_fail_closed(tmp_path: Path) -> None
     with pytest.raises(ServiceUnavailableError, match="missing an authorized vector ID"):
         service.retrieve(
             RequestContext(user_id="user-1", request_id="retrieve-partial"),
-            RetrievalRequest(query="query", limit=5),
+            RetrievalRequest(query="query", limit=5, token_budget=1000),
         )
 
 
@@ -396,7 +469,7 @@ def test_memory_made_nonindexed_between_allowlist_and_hydration_is_rejected(
     with pytest.raises(AuthorizationError, match="unauthorized_retrieval_result"):
         service.retrieve(
             RequestContext(user_id="user-1", request_id="retrieve-race"),
-            RetrievalRequest(query="query", limit=5),
+            RetrievalRequest(query="query", limit=5, token_budget=1000),
         )
 
 
@@ -411,7 +484,7 @@ def test_invalid_query_is_rejected_before_embedding_or_search(
     with pytest.raises(ValidationError, match="invalid_retrieval_query"):
         service.retrieve(
             RequestContext(user_id="user-1", request_id="retrieve-1"),
-            RetrievalRequest(query=query, limit=5),  # type: ignore[arg-type]
+            RetrievalRequest(query=query, limit=5, token_budget=1000),  # type: ignore[arg-type]
         )
 
     assert embedder.calls == []
@@ -429,7 +502,33 @@ def test_invalid_limit_is_rejected_before_embedding_or_search(
     with pytest.raises(ValidationError, match="invalid_retrieval_limit"):
         service.retrieve(
             RequestContext(user_id="user-1", request_id="retrieve-1"),
-            RetrievalRequest(query="query", limit=limit),  # type: ignore[arg-type]
+            RetrievalRequest(
+                query="query",
+                limit=limit,  # type: ignore[arg-type]
+                token_budget=1000,
+            ),
+        )
+
+    assert embedder.calls == []
+    assert vector_index.search_calls == 0
+
+
+@pytest.mark.parametrize("token_budget", [True, -1, 1.5, "1", None])
+def test_invalid_token_budget_is_rejected_before_embedding_or_search(
+    tmp_path: Path,
+    token_budget: object,
+) -> None:
+    embedder = MappingEmbedder({})
+    service, _, vector_index = _service(tmp_path, embedder=embedder)
+
+    with pytest.raises(ValidationError, match="invalid_token_budget"):
+        service.retrieve(
+            RequestContext(user_id="user-1", request_id="retrieve-1"),
+            RetrievalRequest(
+                query="query",
+                limit=5,
+                token_budget=token_budget,  # type: ignore[arg-type]
+            ),
         )
 
     assert embedder.calls == []

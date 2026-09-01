@@ -148,7 +148,7 @@ Memory <memory_id>:
 
 Use the literal ASCII label, one LF after the colon, normalized content unchanged, two LFs between blocks, and no leading or trailing separator. The empty context is `""` and uses zero tokens.
 
-Process the deterministically ranked list in order. For each candidate, construct the entire prospective context and count `len(encoding.encode(prospective_context))`, thereby counting labels, separators, formatting, and cross-boundary tokenization. Include the complete block only when the prospective count is at most the allowance. Otherwise record `budget_exceeded` and continue to later smaller candidates. Never truncate memory content. Report tokenizer `cl100k_base`, allowance, exact final count, included IDs, and exclusions. Missing or incompatible token configuration is a `ValidationError`.
+Process the deterministically ranked list in order. For each candidate, construct the entire prospective context and count `len(encoding.encode(prospective_context, disallowed_special=()))`, thereby treating special-token-looking memory text as ordinary text while counting labels, separators, formatting, and cross-boundary tokenization. Include the complete block only when the prospective count is at most the allowance. Otherwise record `budget_exceeded` and continue to later smaller candidates. Never truncate memory content. Report tokenizer `cl100k_base`, allowance, exact final count, included IDs, and exclusions. Missing or incompatible token configuration is a `ValidationError` with no fallback tokenizer.
 
 ## 8. Required proof
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from conversational_memory.domain.admission import evaluate_credential_admission
+from conversational_memory.domain.context import select_context
 from conversational_memory.domain.idempotency import (
     RequestFingerprintInput,
     normalize_idempotency_key,
@@ -20,6 +21,7 @@ from conversational_memory.domain.models import (
     MemoryType,
     Provenance,
 )
+from conversational_memory.domain.ranking import RetrievalCandidate, rank_candidates
 
 from .contracts import (
     AdmissionRequest,
@@ -38,8 +40,11 @@ from .ports import (
     IdempotencyPort,
     MemoryIdPort,
     MemoryRepositoryPort,
+    TokenCounterPort,
     VectorIndexPort,
 )
+
+_M1_TOKENIZER = "cl100k_base"
 
 
 class MemoryService:
@@ -52,6 +57,7 @@ class MemoryService:
         embedder: EmbeddingPort,
         repository: MemoryRepositoryPort,
         vector_index: VectorIndexPort,
+        token_counter: TokenCounterPort,
         clock: ClockPort,
         memory_ids: MemoryIdPort,
     ) -> None:
@@ -59,6 +65,7 @@ class MemoryService:
         self._embedder = embedder
         self._repository = repository
         self._vector_index = vector_index
+        self._token_counter = token_counter
         self._clock = clock
         self._memory_ids = memory_ids
 
@@ -113,10 +120,20 @@ class MemoryService:
     ) -> RetrievalResult:
         """Retrieve only owner-authorized indexed memories through a scoped FAISS search."""
         self._validate_context(context)
-        query, limit = self._validate_retrieval_request(request)
+        query, limit, token_budget = self._validate_retrieval_request(request)
+        if self._token_counter.tokenizer_id != _M1_TOKENIZER:
+            raise ValidationError("invalid_tokenizer_configuration")
         allowed_vector_ids = self._repository.eligible_vector_ids(user_id=context.user_id)
         if not allowed_vector_ids:
-            return RetrievalResult(memories=())
+            return RetrievalResult(
+                memories=(),
+                context="",
+                tokenizer=_M1_TOKENIZER,
+                token_budget=token_budget,
+                tokens_used=0,
+                included_memory_ids=(),
+                exclusions=(),
+            )
 
         query_embedding = self._embedder.embed(query)
         hits = self._vector_index.search(
@@ -136,7 +153,8 @@ class MemoryService:
         if len(memories_by_vector_id) != len(hits):
             raise AuthorizationError("unauthorized_retrieval_result")
 
-        selected: list[RetrievedMemory] = []
+        candidates: list[RetrievalCandidate] = []
+        scores_by_memory_id: dict[str, float] = {}
         for hit in hits:
             memory = memories_by_vector_id.get(hit.vector_id)
             if (
@@ -145,8 +163,36 @@ class MemoryService:
                 or memory.indexing_state is not IndexingState.INDEXED
             ):
                 raise AuthorizationError("unauthorized_retrieval_result")
-            selected.append(RetrievedMemory(memory=memory, score=hit.score))
-        return RetrievalResult(memories=tuple(selected))
+            candidates.append(
+                RetrievalCandidate(memory=memory, relevance=hit.score, eligible=True)
+            )
+            scores_by_memory_id[memory.memory_id] = hit.score
+
+        ranked = rank_candidates(candidates)
+        try:
+            selection = select_context(
+                [candidate.memory for candidate in ranked],
+                token_budget,
+                self._token_counter.count_tokens,
+            )
+        except ValueError as error:
+            raise ValidationError("invalid_tokenizer_result") from error
+        selected = tuple(
+            RetrievedMemory(
+                memory=memory,
+                score=scores_by_memory_id[memory.memory_id],
+            )
+            for memory in selection.selected_memories
+        )
+        return RetrievalResult(
+            memories=selected,
+            context=selection.context,
+            tokenizer=_M1_TOKENIZER,
+            token_budget=token_budget,
+            tokens_used=selection.tokens_used,
+            included_memory_ids=tuple(memory.memory_id for memory in selection.selected_memories),
+            exclusions=selection.exclusions,
+        )
 
     def _retry_indexing(
         self,
@@ -222,7 +268,7 @@ class MemoryService:
             raise ValidationError("invalid_request_id")
 
     @staticmethod
-    def _validate_retrieval_request(request: RetrievalRequest) -> tuple[str, int]:
+    def _validate_retrieval_request(request: RetrievalRequest) -> tuple[str, int, int]:
         if not isinstance(request.query, str):
             raise ValidationError("invalid_retrieval_query")
         query = normalize_text(request.query)
@@ -234,7 +280,13 @@ class MemoryService:
             or request.limit <= 0
         ):
             raise ValidationError("invalid_retrieval_limit")
-        return query, request.limit
+        if (
+            isinstance(request.token_budget, bool)
+            or not isinstance(request.token_budget, int)
+            or request.token_budget < 0
+        ):
+            raise ValidationError("invalid_token_budget")
+        return query, request.limit, request.token_budget
 
     @staticmethod
     def _canonicalize(

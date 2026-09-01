@@ -125,6 +125,13 @@ class SpyMemoryIds:
         return "memory-1"
 
 
+class SpyTokenCounter:
+    tokenizer_id = "cl100k_base"
+
+    def count_tokens(self, text: str) -> int:
+        return len(text)
+
+
 class SpyRepository:
     def __init__(self, events: list[str]) -> None:
         self.events = events
@@ -183,6 +190,7 @@ class Harness:
             embedder=self.embedder,
             repository=self.repository,
             vector_index=self.vector_index,
+            token_counter=SpyTokenCounter(),
             clock=SpyClock(self.events),
             memory_ids=SpyMemoryIds(self.events),
         )

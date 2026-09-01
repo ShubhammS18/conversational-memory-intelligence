@@ -18,7 +18,11 @@ from conversational_memory.application import (
 )
 from conversational_memory.composition import compose_memory_service
 from conversational_memory.domain.models import AdmissionDecision, IndexingState
-from conversational_memory.infrastructure import FaissVectorIndex, SQLiteMemoryRepository
+from conversational_memory.infrastructure import (
+    FaissVectorIndex,
+    SQLiteMemoryRepository,
+    TiktokenTokenCounter,
+)
 
 MODEL = "test-model"
 DIMENSION = 3
@@ -130,6 +134,7 @@ def _compose(
         repository=repository,
         vector_index=vector_index,
         embedder=embedder,
+        token_counter=TiktokenTokenCounter(),
         clock=FixedClock(),
         memory_ids=memory_ids,
     )

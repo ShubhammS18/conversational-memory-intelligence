@@ -5,6 +5,7 @@ from conversational_memory.application import (
     EmbeddingPort,
     MemoryIdPort,
     MemoryService,
+    TokenCounterPort,
 )
 from conversational_memory.infrastructure import FaissVectorIndex, SQLiteMemoryRepository
 
@@ -14,6 +15,7 @@ def compose_memory_service(
     repository: SQLiteMemoryRepository,
     vector_index: FaissVectorIndex,
     embedder: EmbeddingPort,
+    token_counter: TokenCounterPort,
     clock: ClockPort,
     memory_ids: MemoryIdPort,
 ) -> MemoryService:
@@ -23,6 +25,7 @@ def compose_memory_service(
         embedder=embedder,
         repository=repository,
         vector_index=vector_index,
+        token_counter=token_counter,
         clock=clock,
         memory_ids=memory_ids,
     )

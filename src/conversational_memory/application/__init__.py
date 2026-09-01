@@ -28,6 +28,7 @@ from .ports import (
     IdempotencyPort,
     MemoryIdPort,
     MemoryRepositoryPort,
+    TokenCounterPort,
     VectorIndexPort,
 )
 from .service import MemoryService
@@ -55,6 +56,7 @@ __all__ = [
     "RetrievedMemory",
     "ServiceUnavailableError",
     "StorageError",
+    "TokenCounterPort",
     "ValidationError",
     "VectorIndexPort",
     "VectorSearchHit",

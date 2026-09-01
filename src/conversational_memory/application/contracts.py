@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 
+from conversational_memory.domain.context import ContextExclusion
 from conversational_memory.domain.models import AdmissionDecision, IndexingState, MemoryRecord
 
 
@@ -36,10 +37,11 @@ class AdmissionRequest:
 
 @dataclass(frozen=True, slots=True)
 class RetrievalRequest:
-    """Untrusted retrieval payload; authoritative identity is deliberately absent."""
+    """Untrusted retrieval payload with a memory-only context allowance."""
 
     query: str
     limit: int
+    token_budget: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,9 +116,15 @@ class RetrievedMemory:
 
 @dataclass(frozen=True, slots=True)
 class RetrievalResult:
-    """Ordered M1 retrieval output before context construction."""
+    """Ordered selected memories and exact bounded M1 context evidence."""
 
     memories: tuple[RetrievedMemory, ...]
+    context: str
+    tokenizer: str
+    token_budget: int
+    tokens_used: int
+    included_memory_ids: tuple[str, ...]
+    exclusions: tuple[ContextExclusion, ...]
 
 
 @dataclass(frozen=True, slots=True)

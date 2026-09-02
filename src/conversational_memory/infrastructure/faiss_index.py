@@ -97,7 +97,8 @@ class FaissVectorIndex:
 
         with self._lock:
             try:
-                candidate = faiss.clone_index(self._index)
+                current = self._load_current_generation()
+                candidate = faiss.clone_index(current)
                 vector_ids = np.asarray([vector_id], dtype=np.int64)
                 candidate.remove_ids(faiss.IDSelectorBatch(vector_ids))
                 candidate.add_with_ids(vector, vector_ids)
@@ -107,6 +108,18 @@ class FaissVectorIndex:
                 candidate,
                 expected_vector_id=vector_id,
             )
+
+    def _load_current_generation(self) -> Any:
+        index_exists = self._final_index.is_file()
+        metadata_exists = self._final_metadata.is_file()
+        if index_exists != metadata_exists:
+            raise IndexingError("FAISS current generation is incomplete")
+        if not index_exists:
+            return self._index
+        try:
+            return self._load_startup_generation()
+        except (ConfigurationMismatchError, ServiceUnavailableError) as error:
+            raise IndexingError("FAISS current generation could not be loaded") from error
 
     def search(
         self,

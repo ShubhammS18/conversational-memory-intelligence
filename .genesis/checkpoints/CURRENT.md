@@ -1,10 +1,10 @@
 # CURRENT
-- active_loop: BUILD
-- target: M1
-- iteration: 7
-- last_gate: G4 (passed)
-- last_action: implemented and verified iteration 7 immutable cache-only CPU all-mpnet-base-v2 embedding with modern/legacy dimension-accessor compatibility; 165 routine tests and the required real-model gate pass
-- next_action: await review of iteration 7 before extending M1
+- active_loop: NOT_STARTED
+- target: M2
+- iteration: 0
+- last_gate: M1 complete (independent G5 APPROVE and required human quiz passed)
+- last_action: formally closed M1 after explicit user authorization; preserved all historical incidents and limitations
+- next_action: when explicitly requested, begin M2 with G0 existence preflight; no M2 work has started
 - model: gpt-5.6-sol
 - tokens_used: 0
 - tokens_budget: 50000

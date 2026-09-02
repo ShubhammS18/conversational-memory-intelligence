@@ -147,6 +147,12 @@ If embedding or transaction A fails, no durable memory or FAISS mutation exists.
 
 Full success means transaction B committed and returns `indexing_state="indexed"` and `retrievable=true`. Retrieval obtains eligible vector IDs only from owner-scoped SQLite rows marked `indexed`; similarity cannot expand that set.
 
+### Approved M1 interpretation of “similar-score” retrieval ordering
+
+For M1 retrieval ranking, order candidates by relevance descending. “Similar-score ties” in `DONE.html` means exact equality of the relevance scores supplied to the ranker: do not use epsilon comparisons, rounding, quantization, or score buckets, and any unequal score retains relevance precedence. For exactly equal relevance, order by recency descending; when relevance and recency tie, prefer explicit-user authority; when all preceding criteria tie, use the existing deterministic stable-ID ordering.
+
+This M1 retrieval-ordering clarification takes precedence over the authority-before-recency wording in ADR-004 only for ordering already eligible retrieval candidates. It does not change contradiction resolution, supersession, lifecycle behavior, D4 evidence, or later-milestone policy, and ranking first neither establishes truth nor authorizes a state change.
+
 ## 7. Exact M1 context serialization
 
 M1 uses `tiktoken.get_encoding("cl100k_base")`. The caller supplies only the memory-context allowance.

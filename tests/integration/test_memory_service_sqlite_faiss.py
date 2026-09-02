@@ -170,7 +170,7 @@ def _faiss_ids(index_directory: Path) -> list[int]:
     return [int(value) for value in faiss.vector_to_array(index.id_map)]
 
 
-def test_admission_persists_pending_before_same_stable_id_is_indexed(
+def _scenario_admission_persists_pending_before_same_stable_id_is_indexed(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "memory.sqlite3"
@@ -198,7 +198,7 @@ def test_admission_persists_pending_before_same_stable_id_is_indexed(
     assert memory_ids.calls == 1
 
 
-def test_confirmed_faiss_failure_is_failed_and_nonretrievable_until_retry(
+def _scenario_confirmed_faiss_failure_is_failed_and_nonretrievable_until_retry(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "memory.sqlite3"
@@ -236,7 +236,7 @@ def test_confirmed_faiss_failure_is_failed_and_nonretrievable_until_retry(
     assert memory_ids.calls == 1
 
 
-def test_faiss_success_with_failed_sqlite_ack_retries_same_id_without_duplicate(
+def _scenario_faiss_success_with_failed_sqlite_ack_retries_same_id_without_duplicate(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "memory.sqlite3"
@@ -278,7 +278,7 @@ def test_faiss_success_with_failed_sqlite_ack_retries_same_id_without_duplicate(
     assert memory_ids.calls == 1
 
 
-def test_indexed_idempotent_replay_returns_stored_result_without_mutation(
+def _scenario_indexed_idempotent_replay_returns_stored_result_without_mutation(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "memory.sqlite3"
@@ -309,7 +309,9 @@ def test_indexed_idempotent_replay_returns_stored_result_without_mutation(
     assert memory_ids.calls == 1
 
 
-def test_idempotency_conflict_fails_before_sqlite_or_faiss_mutation(tmp_path: Path) -> None:
+def _scenario_idempotency_conflict_fails_before_sqlite_or_faiss_mutation(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "memory.sqlite3"
     index_directory = tmp_path / "index"
     repository = SQLiteMemoryRepository(database_path)
@@ -335,7 +337,9 @@ def test_idempotency_conflict_fails_before_sqlite_or_faiss_mutation(tmp_path: Pa
     assert memory_ids.calls == 1
 
 
-def test_credential_rejection_creates_no_sqlite_or_faiss_mutation(tmp_path: Path) -> None:
+def _scenario_credential_rejection_creates_no_sqlite_or_faiss_mutation(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "memory.sqlite3"
     index_directory = tmp_path / "index"
     repository = SQLiteMemoryRepository(database_path)

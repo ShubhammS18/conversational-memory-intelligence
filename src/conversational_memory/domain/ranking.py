@@ -35,8 +35,8 @@ def rank_candidates(candidates: list[RetrievalCandidate]) -> tuple[RetrievalCand
             eligible,
             key=lambda candidate: (
                 -candidate.relevance,
-                -_AUTHORITY_ORDER[candidate.memory.provenance.authority],
                 -_recency_time(candidate.memory).timestamp(),
+                -_AUTHORITY_ORDER[candidate.memory.provenance.authority],
                 candidate.memory.memory_id,
             ),
         )

@@ -5,43 +5,67 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, field_validator
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from conversational_memory.domain.context import ContextExclusion
 from conversational_memory.domain.models import AdmissionDecision, IndexingState, MemoryRecord
 
+_BOUNDARY_CONFIG = ConfigDict(strict=True, extra="forbid", arbitrary_types_allowed=True)
+StrictText = Annotated[str, Field(strict=True)]
+PositiveStrictInt = Annotated[int, Field(strict=True, gt=0)]
+NonNegativeStrictInt = Annotated[int, Field(strict=True, ge=0)]
+StrictBoolean = Annotated[bool, Field(strict=True)]
 
-@dataclass(frozen=True, slots=True)
+
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class RequestContext:
     """Identity established by the trusted calling adapter."""
 
-    user_id: str
-    request_id: str
+    user_id: StrictText
+    request_id: StrictText
+
+    @field_validator("user_id", "request_id")
+    @classmethod
+    def _require_nonempty_identity(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("trusted request context fields must not be empty")
+        return value
 
 
-@dataclass(frozen=True, slots=True)
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class AdmissionRequest:
     """Untrusted admission payload; authoritative identity is deliberately absent."""
 
-    idempotency_key: str
-    conversation_id: str
-    turn_id: str
-    content: str
-    memory_type: str
-    subject: str | None
+    idempotency_key: StrictText
+    conversation_id: StrictText
+    turn_id: StrictText
+    content: StrictText
+    memory_type: StrictText
+    subject: StrictText | None
     value: object
-    source_type: str
+    source_type: StrictText
     source_event_at: datetime | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class RetrievalRequest:
     """Untrusted retrieval payload with a memory-only context allowance."""
 
-    query: str
-    limit: int
-    token_budget: int
+    query: StrictText
+    limit: PositiveStrictInt
+    token_budget: NonNegativeStrictInt
+
+    @field_validator("query")
+    @classmethod
+    def _require_nonempty_query(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("query must not be empty")
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,16 +91,16 @@ class Embedding:
             raise ValueError("embedding values must be finite")
 
 
-@dataclass(frozen=True, slots=True)
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class AdmissionResult:
     """Structured result of the admission and indexing workflow."""
 
     decision: AdmissionDecision
-    reason: str
-    memory_id: str | None
+    reason: StrictText
+    memory_id: StrictText | None
     indexing_state: IndexingState | None
-    retrievable: bool
-    retryable_error: str | None = None
+    retrievable: StrictBoolean
+    retryable_error: StrictText | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +130,7 @@ class HydratedMemory:
     memory: MemoryRecord
 
 
-@dataclass(frozen=True, slots=True)
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class RetrievedMemory:
     """An owner-authorized memory selected by vector similarity."""
 
@@ -114,16 +138,16 @@ class RetrievedMemory:
     score: float
 
 
-@dataclass(frozen=True, slots=True)
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class RetrievalResult:
     """Ordered selected memories and exact bounded M1 context evidence."""
 
     memories: tuple[RetrievedMemory, ...]
-    context: str
-    tokenizer: str
-    token_budget: int
-    tokens_used: int
-    included_memory_ids: tuple[str, ...]
+    context: StrictText
+    tokenizer: StrictText
+    token_budget: NonNegativeStrictInt
+    tokens_used: NonNegativeStrictInt
+    included_memory_ids: tuple[StrictText, ...]
     exclusions: tuple[ContextExclusion, ...]
 
 

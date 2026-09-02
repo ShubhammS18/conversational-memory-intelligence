@@ -1,3 +1,5 @@
+"""Regression coverage for the locked M1 complete-memory context contract."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

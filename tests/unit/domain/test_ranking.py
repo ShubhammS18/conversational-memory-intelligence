@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime, timedelta
 
 from conversational_memory.domain.models import (
@@ -52,29 +53,101 @@ def test_eligibility_precedes_every_ranking_signal() -> None:
     assert [candidate.memory.memory_id for candidate in ranked] == ["eligible"]
 
 
-def test_ranking_is_relevance_then_authority_then_recency_then_stable_id() -> None:
+def test_equal_relevance_prefers_recency_before_authority() -> None:
     ranked = rank_candidates(
         [
-            _candidate("z", relevance=0.8, created_at=NOW),
-            _candidate("a", relevance=0.8, created_at=NOW),
-            _candidate("older", relevance=0.8, created_at=NOW - timedelta(days=1)),
             _candidate(
-                "inferred",
+                "newer-inferred",
                 relevance=0.8,
                 authority=EvidenceAuthority.INFERRED,
                 created_at=NOW + timedelta(days=1),
             ),
-            _candidate("most-relevant", relevance=0.9, created_at=NOW - timedelta(days=10)),
+            _candidate(
+                "older-explicit",
+                relevance=0.8,
+                authority=EvidenceAuthority.EXPLICIT_USER,
+                created_at=NOW,
+            ),
         ]
     )
 
     assert [candidate.memory.memory_id for candidate in ranked] == [
-        "most-relevant",
-        "a",
-        "z",
-        "older",
-        "inferred",
+        "newer-inferred",
+        "older-explicit",
     ]
+
+
+def test_equal_relevance_and_recency_prefers_explicit_authority() -> None:
+    ranked = rank_candidates(
+        [
+            _candidate(
+                "inferred",
+                relevance=0.8,
+                authority=EvidenceAuthority.INFERRED,
+            ),
+            _candidate("explicit", relevance=0.8),
+        ]
+    )
+
+    assert [candidate.memory.memory_id for candidate in ranked] == ["explicit", "inferred"]
+
+
+def test_all_preceding_ties_use_stable_id_order() -> None:
+    ranked = rank_candidates(
+        [
+            _candidate("z", relevance=0.8),
+            _candidate("a", relevance=0.8),
+        ]
+    )
+
+    assert [candidate.memory.memory_id for candidate in ranked] == ["a", "z"]
+
+
+def test_near_but_unequal_relevance_retains_precedence() -> None:
+    higher_relevance = math.nextafter(0.8, math.inf)
+    ranked = rank_candidates(
+        [
+            _candidate(
+                "lower-newer-explicit",
+                relevance=0.8,
+                created_at=NOW + timedelta(days=1),
+            ),
+            _candidate(
+                "higher-older-inferred",
+                relevance=higher_relevance,
+                authority=EvidenceAuthority.INFERRED,
+                created_at=NOW - timedelta(days=1),
+            ),
+        ]
+    )
+
+    assert [candidate.memory.memory_id for candidate in ranked] == [
+        "higher-older-inferred",
+        "lower-newer-explicit",
+    ]
+
+
+def test_input_order_does_not_change_ranking() -> None:
+    candidates = [
+        _candidate("older-explicit", relevance=0.8, created_at=NOW),
+        _candidate(
+            "newer-inferred",
+            relevance=0.8,
+            authority=EvidenceAuthority.INFERRED,
+            created_at=NOW + timedelta(days=1),
+        ),
+        _candidate("newer-explicit", relevance=0.8, created_at=NOW + timedelta(days=1)),
+        _candidate("most-relevant", relevance=0.9, created_at=NOW - timedelta(days=10)),
+    ]
+
+    expected = [
+        "most-relevant",
+        "newer-explicit",
+        "newer-inferred",
+        "older-explicit",
+    ]
+    assert [candidate.memory.memory_id for candidate in rank_candidates(candidates)] == expected
+    assert [candidate.memory.memory_id for candidate in rank_candidates(list(reversed(candidates)))] == expected
 
 
 def test_recency_uses_valid_from_when_creation_and_validity_order_disagree() -> None:

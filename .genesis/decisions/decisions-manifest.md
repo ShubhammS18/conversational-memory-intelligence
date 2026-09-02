@@ -78,3 +78,4 @@ Any cross-user disclosure, sensitive-memory retention, retrieval of deleted or i
 ## Binding implementation decision records
 
 - [`M1-implementation-bindings`](M1-implementation-bindings.md) — package, idempotency, credential-admission, SQLite/FAISS persistence, indexing-state, and exact context-serialization bindings for the integrated M1 slice.
+- [`M1-freeze-boundary-exceptions`](M1-freeze-boundary-exceptions.md) — eight approved M1-only evidence/test-support paths plus the decision record and this manifest registration.

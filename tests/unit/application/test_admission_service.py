@@ -4,6 +4,8 @@ from dataclasses import fields
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
+from pydantic.dataclasses import is_pydantic_dataclass
 
 from conversational_memory.application import (
     AdmissionRequest,
@@ -14,6 +16,9 @@ from conversational_memory.application import (
     MemoryService,
     PersistedPendingMemory,
     RequestContext,
+    RetrievalRequest,
+    RetrievalResult,
+    RetrievedMemory,
     StorageError,
     ValidationError,
 )
@@ -198,6 +203,32 @@ class Harness:
 
 def test_admission_request_has_no_authoritative_user_id() -> None:
     assert "user_id" not in {field.name for field in fields(AdmissionRequest)}
+
+
+def test_public_boundary_records_use_pydantic_validation() -> None:
+    assert is_pydantic_dataclass(RequestContext)
+    assert is_pydantic_dataclass(AdmissionRequest)
+    assert is_pydantic_dataclass(AdmissionResult)
+    assert is_pydantic_dataclass(RetrievalRequest)
+    assert is_pydantic_dataclass(RetrievedMemory)
+    assert is_pydantic_dataclass(RetrievalResult)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("user_id", 7), ("request_id", True), ("user_id", "   ")],
+)
+def test_request_context_rejects_invalid_trusted_identity(field: str, value: object) -> None:
+    values: dict[str, object] = {"user_id": "user-1", "request_id": "request-1"}
+    values[field] = value
+
+    with pytest.raises(PydanticValidationError):
+        RequestContext(**values)  # type: ignore[arg-type]
+
+
+def test_admission_request_rejects_string_coercion_at_the_public_boundary() -> None:
+    with pytest.raises(PydanticValidationError):
+        _request(content=7)
 
 
 @pytest.mark.parametrize("invalid_dimension", [True, 1.0, "1", 0, -1])

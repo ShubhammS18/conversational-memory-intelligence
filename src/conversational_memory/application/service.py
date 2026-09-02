@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from threading import Lock
 
 from conversational_memory.domain.admission import evaluate_credential_admission
 from conversational_memory.domain.context import select_context
@@ -45,6 +46,7 @@ from .ports import (
 )
 
 _M1_TOKENIZER = "cl100k_base"
+_PROCESS_WRITE_LOCK = Lock()
 
 
 class MemoryService:
@@ -74,44 +76,45 @@ class MemoryService:
         self._validate_context(context)
         fingerprint_input, idempotency_key, fingerprint = self._canonicalize(request)
 
-        existing = self._idempotency.find(
-            user_id=context.user_id,
-            idempotency_key=idempotency_key,
-        )
-        if existing is not None:
-            if existing.request_fingerprint != fingerprint:
-                raise ValidationError("idempotency_key_conflict")
-            if existing.result.indexing_state is IndexingState.INDEXED:
-                return existing.result
-            return self._retry_indexing(context, existing)
+        with _PROCESS_WRITE_LOCK:
+            existing = self._idempotency.find(
+                user_id=context.user_id,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                if existing.request_fingerprint != fingerprint:
+                    raise ValidationError("idempotency_key_conflict")
+                if existing.result.indexing_state is IndexingState.INDEXED:
+                    return existing.result
+                return self._retry_indexing(context, existing)
 
-        policy_result = evaluate_credential_admission(fingerprint_input)
-        if policy_result.decision is not AdmissionDecision.ACCEPTED:
-            return AdmissionResult(
-                decision=policy_result.decision,
-                reason=policy_result.reason,
-                memory_id=None,
-                indexing_state=None,
-                retrievable=False,
+            policy_result = evaluate_credential_admission(fingerprint_input)
+            if policy_result.decision is not AdmissionDecision.ACCEPTED:
+                return AdmissionResult(
+                    decision=policy_result.decision,
+                    reason=policy_result.reason,
+                    memory_id=None,
+                    indexing_state=None,
+                    retrievable=False,
+                )
+
+            content = normalize_text(request.content)
+            embedding = self._embedder.embed(content)
+            created_at = self._clock.now()
+            memory = self._new_memory(context, request, content, created_at)
+            persisted = self._repository.persist_pending(
+                memory=memory,
+                embedding=embedding,
+                idempotency_key=idempotency_key,
+                request_fingerprint=fingerprint,
             )
 
-        content = normalize_text(request.content)
-        embedding = self._embedder.embed(content)
-        created_at = self._clock.now()
-        memory = self._new_memory(context, request, content, created_at)
-        persisted = self._repository.persist_pending(
-            memory=memory,
-            embedding=embedding,
-            idempotency_key=idempotency_key,
-            request_fingerprint=fingerprint,
-        )
-
-        return self._index_and_acknowledge(
-            context=context,
-            memory_id=persisted.memory.memory_id,
-            vector_id=persisted.vector_id,
-            embedding=embedding,
-        )
+            return self._index_and_acknowledge(
+                context=context,
+                memory_id=persisted.memory.memory_id,
+                vector_id=persisted.vector_id,
+                embedding=embedding,
+            )
 
     def retrieve(
         self,

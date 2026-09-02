@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from conversational_memory.application import (
     AdmissionRequest,
@@ -15,7 +16,6 @@ from conversational_memory.application import (
     RequestContext,
     RetrievalRequest,
     ServiceUnavailableError,
-    ValidationError,
     VectorSearchHit,
 )
 from conversational_memory.composition import compose_memory_service
@@ -479,13 +479,10 @@ def test_invalid_query_is_rejected_before_embedding_or_search(
     query: object,
 ) -> None:
     embedder = MappingEmbedder({})
-    service, _, vector_index = _service(tmp_path, embedder=embedder)
+    _unused_service, _, vector_index = _service(tmp_path, embedder=embedder)
 
-    with pytest.raises(ValidationError, match="invalid_retrieval_query"):
-        service.retrieve(
-            RequestContext(user_id="user-1", request_id="retrieve-1"),
-            RetrievalRequest(query=query, limit=5, token_budget=1000),  # type: ignore[arg-type]
-        )
+    with pytest.raises(PydanticValidationError):
+        RetrievalRequest(query=query, limit=5, token_budget=1000)  # type: ignore[arg-type]
 
     assert embedder.calls == []
     assert vector_index.search_calls == 0
@@ -497,16 +494,13 @@ def test_invalid_limit_is_rejected_before_embedding_or_search(
     limit: object,
 ) -> None:
     embedder = MappingEmbedder({})
-    service, _, vector_index = _service(tmp_path, embedder=embedder)
+    _unused_service, _, vector_index = _service(tmp_path, embedder=embedder)
 
-    with pytest.raises(ValidationError, match="invalid_retrieval_limit"):
-        service.retrieve(
-            RequestContext(user_id="user-1", request_id="retrieve-1"),
-            RetrievalRequest(
-                query="query",
-                limit=limit,  # type: ignore[arg-type]
-                token_budget=1000,
-            ),
+    with pytest.raises(PydanticValidationError):
+        RetrievalRequest(
+            query="query",
+            limit=limit,  # type: ignore[arg-type]
+            token_budget=1000,
         )
 
     assert embedder.calls == []
@@ -519,16 +513,13 @@ def test_invalid_token_budget_is_rejected_before_embedding_or_search(
     token_budget: object,
 ) -> None:
     embedder = MappingEmbedder({})
-    service, _, vector_index = _service(tmp_path, embedder=embedder)
+    _unused_service, _, vector_index = _service(tmp_path, embedder=embedder)
 
-    with pytest.raises(ValidationError, match="invalid_token_budget"):
-        service.retrieve(
-            RequestContext(user_id="user-1", request_id="retrieve-1"),
-            RetrievalRequest(
-                query="query",
-                limit=5,
-                token_budget=token_budget,  # type: ignore[arg-type]
-            ),
+    with pytest.raises(PydanticValidationError):
+        RetrievalRequest(
+            query="query",
+            limit=5,
+            token_budget=token_budget,  # type: ignore[arg-type]
         )
 
     assert embedder.calls == []

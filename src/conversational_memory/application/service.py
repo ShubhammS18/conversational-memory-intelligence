@@ -7,6 +7,7 @@ from threading import Lock
 
 from conversational_memory.domain.admission import evaluate_credential_admission
 from conversational_memory.domain.context import select_context
+from conversational_memory.domain.eligibility import is_current_state_eligible
 from conversational_memory.domain.idempotency import (
     RequestFingerprintInput,
     normalize_idempotency_key,
@@ -126,7 +127,11 @@ class MemoryService:
         query, limit, token_budget = self._validate_retrieval_request(request)
         if self._token_counter.tokenizer_id != _M1_TOKENIZER:
             raise ValidationError("invalid_tokenizer_configuration")
-        allowed_vector_ids = self._repository.eligible_vector_ids(user_id=context.user_id)
+        now = self._clock.now()
+        allowed_vector_ids = self._repository.current_state_vector_ids(
+            user_id=context.user_id,
+            now=now,
+        )
         if not allowed_vector_ids:
             return RetrievalResult(
                 memories=(),
@@ -148,9 +153,10 @@ class MemoryService:
         if any(hit.vector_id not in allowed for hit in hits):
             raise AuthorizationError("unauthorized_retrieval_result")
 
-        hydrated = self._repository.hydrate_indexed(
+        hydrated = self._repository.hydrate_current_state(
             user_id=context.user_id,
             vector_ids=tuple(hit.vector_id for hit in hits),
+            now=now,
         )
         memories_by_vector_id = {item.vector_id: item.memory for item in hydrated}
         if len(memories_by_vector_id) != len(hits):
@@ -162,8 +168,11 @@ class MemoryService:
             memory = memories_by_vector_id.get(hit.vector_id)
             if (
                 memory is None
-                or memory.user_id != context.user_id
-                or memory.indexing_state is not IndexingState.INDEXED
+                or not is_current_state_eligible(
+                    memory,
+                    user_id=context.user_id,
+                    now=now,
+                )
             ):
                 raise AuthorizationError("unauthorized_retrieval_result")
             candidates.append(

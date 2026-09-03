@@ -21,6 +21,7 @@ from conversational_memory.application.contracts import (
     PersistedPendingMemory,
 )
 from conversational_memory.application.errors import StorageError
+from conversational_memory.domain.eligibility import is_current_state_eligible
 from conversational_memory.domain.models import (
     AdmissionDecision,
     EvidenceAuthority,
@@ -193,6 +194,36 @@ class SQLiteMemoryRepository:
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise StorageError("SQLite eligible-vector lookup failed") from error
 
+    def current_state_vector_ids(
+        self,
+        *,
+        user_id: str,
+        now: datetime,
+    ) -> tuple[int, ...]:
+        """Return vector IDs satisfying every authoritative M2 read rule."""
+        current_time = _utc_text(now)
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT v.vector_id
+                    FROM memory_vector_mappings AS v
+                    JOIN memories AS m ON m.memory_id = v.memory_id
+                    WHERE m.user_id = ?
+                      AND m.indexing_state = 'indexed'
+                      AND m.deleted_at IS NULL
+                      AND m.lifecycle_status = 'active'
+                      AND m.superseded_by IS NULL
+                      AND (m.valid_from IS NULL OR m.valid_from <= ?)
+                      AND (m.valid_until IS NULL OR ? < m.valid_until)
+                    ORDER BY v.vector_id
+                    """,
+                    (user_id, current_time, current_time),
+                ).fetchall()
+            return tuple(int(row["vector_id"]) for row in rows)
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise StorageError("SQLite current-state vector lookup failed") from error
+
     def hydrate_indexed(
         self,
         *,
@@ -222,6 +253,21 @@ class SQLiteMemoryRepository:
             )
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise StorageError("SQLite indexed-memory hydration failed") from error
+
+    def hydrate_current_state(
+        self,
+        *,
+        user_id: str,
+        vector_ids: tuple[int, ...],
+        now: datetime,
+    ) -> tuple[HydratedMemory, ...]:
+        """Hydrate mappings only while every M2 read rule still holds."""
+        hydrated = self.hydrate_indexed(user_id=user_id, vector_ids=vector_ids)
+        return tuple(
+            item
+            for item in hydrated
+            if is_current_state_eligible(item.memory, user_id=user_id, now=now)
+        )
 
     def _transition(
         self,
@@ -258,8 +304,8 @@ class SQLiteMemoryRepository:
                 memory_id, user_id, content, memory_type, provenance_authority,
                 source_type, conversation_id, turn_id, source_event_at, created_at,
                 lifecycle_status, indexing_state, indexing_error, subject, value_json,
-                valid_from, valid_until, supersedes_json, superseded_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                valid_from, valid_until, supersedes_json, superseded_by, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 memory.memory_id,
@@ -281,6 +327,7 @@ class SQLiteMemoryRepository:
                 _optional_utc_text(memory.valid_until),
                 _json_text(memory.supersedes),
                 memory.superseded_by,
+                _optional_utc_text(memory.deleted_at),
             ),
         )
 
@@ -317,6 +364,7 @@ def _row_to_memory(row: sqlite3.Row) -> MemoryRecord:
         valid_until=_optional_datetime(row["valid_until"]),
         supersedes=tuple(json.loads(str(row["supersedes_json"]))),
         superseded_by=_optional_text(row["superseded_by"]),
+        deleted_at=_optional_datetime(row["deleted_at"]),
     )
 
 

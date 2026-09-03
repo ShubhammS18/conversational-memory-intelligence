@@ -52,8 +52,20 @@ class MemoryRepositoryPort(Protocol):
 
     def eligible_vector_ids(self, *, user_id: str) -> tuple[int, ...]: ...
 
+    def current_state_vector_ids(
+        self, *, user_id: str, now: datetime
+    ) -> tuple[int, ...]: ...
+
     def hydrate_indexed(
         self, *, user_id: str, vector_ids: tuple[int, ...]
+    ) -> tuple[HydratedMemory, ...]: ...
+
+    def hydrate_current_state(
+        self,
+        *,
+        user_id: str,
+        vector_ids: tuple[int, ...],
+        now: datetime,
     ) -> tuple[HydratedMemory, ...]: ...
 
 

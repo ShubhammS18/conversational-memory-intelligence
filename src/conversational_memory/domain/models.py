@@ -91,6 +91,7 @@ class MemoryRecord:
     valid_until: datetime | None = None
     supersedes: tuple[str, ...] = ()
     superseded_by: str | None = None
+    deleted_at: datetime | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty("memory_id", self.memory_id)
@@ -101,6 +102,8 @@ class MemoryRecord:
             _require_aware("valid_from", self.valid_from)
         if self.valid_until is not None:
             _require_aware("valid_until", self.valid_until)
+        if self.deleted_at is not None:
+            _require_aware("deleted_at", self.deleted_at)
         if (
             self.valid_from is not None
             and self.valid_until is not None

@@ -79,3 +79,5 @@ Any cross-user disclosure, sensitive-memory retention, retrieval of deleted or i
 
 - [`M1-implementation-bindings`](M1-implementation-bindings.md) — package, idempotency, credential-admission, SQLite/FAISS persistence, indexing-state, and exact context-serialization bindings for the integrated M1 slice.
 - [`M1-freeze-boundary-exceptions`](M1-freeze-boundary-exceptions.md) — eight approved M1-only evidence/test-support paths plus the decision record and this manifest registration.
+- [`M2-current-state-eligibility-bindings`](M2-current-state-eligibility-bindings.md) — M2 read-side tombstone, lifecycle, supersession, validity-boundary, and single-trusted-time rules for pre-search and hydration eligibility.
+- [`M2-freeze-boundary-exceptions`](M2-freeze-boundary-exceptions.md) — exactly five M2-only Genesis paths for mandatory checkpoint evidence and scoped decision/manifest records.

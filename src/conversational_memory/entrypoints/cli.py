@@ -23,12 +23,24 @@ def build_parser() -> argparse.ArgumentParser:
         "demo-first-slice",
         help="Run the real persisted M1 admission, restart, and retrieval demonstration",
     )
+    subcommands.add_parser(
+        "demo-current-state",
+        help="Run the real M2 current-state eligibility demonstration",
+    )
     return parser
 
 
 class _UtcClock:
     def now(self) -> datetime:
         return datetime.now(UTC)
+
+
+class _FixedClock:
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
 
 
 class _UuidMemoryIds:
@@ -156,12 +168,81 @@ def _demo_first_slice() -> int:
     return 0
 
 
+def _demo_current_state() -> int:
+    from datetime import timedelta
+
+    from conversational_memory.application import (
+        AdmissionRequest,
+        RequestContext,
+        RetrievalRequest,
+    )
+    from conversational_memory.composition import compose_local_memory_service
+
+    now = datetime(2026, 9, 3, 12, tzinfo=UTC)
+    scenarios = (
+        ("current", now - timedelta(days=1), now + timedelta(days=1)),
+        ("ended", now - timedelta(days=1), now),
+        ("future", now + timedelta(days=1), None),
+    )
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m2-") as temporary:
+        root = Path(temporary)
+        service = compose_local_memory_service(
+            database_path=root / "memory.sqlite3",
+            index_directory=root / "index",
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_UuidMemoryIds(),
+            create_index_if_missing=True,
+        )
+        admissions = {}
+        for name, valid_from, valid_until in scenarios:
+            admissions[name] = service.admit(
+                RequestContext(user_id="demo-user", request_id=f"admit-{name}"),
+                AdmissionRequest(
+                    idempotency_key=f"m2-{name}",
+                    conversation_id="m2-demo-conversation",
+                    turn_id=f"m2-{name}",
+                    content=f"M2 {name} memory.",
+                    memory_type="fact",
+                    subject="current-state-demo",
+                    value=name,
+                    source_type="explicit_user",
+                    valid_from=valid_from,
+                    valid_until=valid_until,
+                ),
+            )
+        result = service.retrieve(
+            RequestContext(user_id="demo-user", request_id="retrieve-current-state"),
+            RetrievalRequest(query="M2 memory", limit=10, token_budget=128),
+        )
+        current_id = admissions["current"].memory_id
+        if current_id is None or result.included_memory_ids != (current_id,):
+            raise RuntimeError("M2 demo current-state filtering failed")
+
+        output = {
+            "trusted_now": now.isoformat(),
+            "selected_memory_ids": list(result.included_memory_ids),
+            "current_memory_id": current_id,
+            "excluded_seed_ids": {
+                name: admission.memory_id
+                for name, admission in admissions.items()
+                if name != "current"
+            },
+            "token_budget": result.token_budget,
+            "tokens_used": result.tokens_used,
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
     arguments = parser.parse_args(argv)
     if arguments.command == "demo-first-slice":
         return _demo_first_slice()
+    if arguments.command == "demo-current-state":
+        return _demo_current_state()
     return 0
 
 

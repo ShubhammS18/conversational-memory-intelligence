@@ -51,6 +51,7 @@ def test_real_faiss_persistence_failure_is_failed_and_nonretrievable(tmp_path: P
         token_counter=TiktokenTokenCounter(),
         clock=FixedClock(),
         memory_ids=FixedMemoryIds(),
+        relevance_threshold=0.50,
     )
 
     result = service.admit(

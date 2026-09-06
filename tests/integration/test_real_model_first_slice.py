@@ -77,6 +77,7 @@ def test_real_model_restart_owner_scope_and_bounded_context(tmp_path: Path) -> N
         token_counter=token_counter,
         clock=FixedClock(),
         memory_ids=SequentialMemoryIds(),
+        relevance_threshold=0.50,
     )
     owner_context = RequestContext(user_id="user-1", request_id="real-admit-1")
 
@@ -119,6 +120,7 @@ def test_real_model_restart_owner_scope_and_bounded_context(tmp_path: Path) -> N
         token_counter=token_counter,
         clock=FixedClock(),
         memory_ids=SequentialMemoryIds(),
+        relevance_threshold=0.50,
     )
     hydrated = restarted_repository.hydrate_indexed(
         user_id="user-1",

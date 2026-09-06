@@ -198,6 +198,7 @@ class Harness:
             token_counter=SpyTokenCounter(),
             clock=SpyClock(self.events),
             memory_ids=SpyMemoryIds(self.events),
+            relevance_threshold=0.50,
         )
 
 

@@ -12,6 +12,7 @@ from .models import MemoryRecord
 class ContextExclusionReason(StrEnum):
     """Deterministic reasons a context candidate was not included."""
 
+    BELOW_RELEVANCE_THRESHOLD = "below_relevance_threshold"
     BUDGET_EXCEEDED = "budget_exceeded"
 
 

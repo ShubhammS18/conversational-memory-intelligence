@@ -50,6 +50,7 @@ def _compose_for_concurrency(
         token_counter=UnusedTokenCounter(),
         clock=FixedClock(),
         memory_ids=memory_ids,
+        relevance_threshold=0.50,
     )
 
 

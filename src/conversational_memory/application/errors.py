@@ -13,6 +13,10 @@ class ValidationError(ApplicationError):
         super().__init__(reason)
 
 
+class ConfigurationError(ApplicationError):
+    """Required application policy configuration is missing or invalid."""
+
+
 class AuthorizationError(ApplicationError):
     """A result crossed the trusted owner boundary."""
 

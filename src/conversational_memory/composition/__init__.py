@@ -18,6 +18,8 @@ from conversational_memory.infrastructure import (
     TiktokenTokenCounter,
 )
 
+_MISSING_RELEVANCE_THRESHOLD = object()
+
 
 def compose_memory_service(
     *,
@@ -27,6 +29,7 @@ def compose_memory_service(
     token_counter: TokenCounterPort,
     clock: ClockPort,
     memory_ids: MemoryIdPort,
+    relevance_threshold: object = _MISSING_RELEVANCE_THRESHOLD,
 ) -> MemoryService:
     """Connect concrete local persistence to the application workflow."""
     return MemoryService(
@@ -37,6 +40,7 @@ def compose_memory_service(
         token_counter=token_counter,
         clock=clock,
         memory_ids=memory_ids,
+        relevance_threshold=relevance_threshold,
     )
 
 
@@ -48,6 +52,7 @@ def compose_local_memory_service(
     clock: ClockPort,
     memory_ids: MemoryIdPort,
     create_index_if_missing: bool = False,
+    relevance_threshold: object = _MISSING_RELEVANCE_THRESHOLD,
 ) -> MemoryService:
     """Build the approved real local M1 service at the sole concrete composition point."""
     repository = SQLiteMemoryRepository(database_path)
@@ -64,6 +69,7 @@ def compose_local_memory_service(
         token_counter=TiktokenTokenCounter(),
         clock=clock,
         memory_ids=memory_ids,
+        relevance_threshold=relevance_threshold,
     )
 
 

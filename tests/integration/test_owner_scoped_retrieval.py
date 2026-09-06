@@ -152,6 +152,7 @@ def _service(
         token_counter=TiktokenTokenCounter(),
         clock=FixedClock(),
         memory_ids=SequentialMemoryIds(),
+        relevance_threshold=0.50,
     )
     return service, repository, vector_index
 

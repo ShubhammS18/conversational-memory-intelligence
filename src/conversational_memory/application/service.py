@@ -6,7 +6,11 @@ from datetime import datetime
 from threading import Lock
 
 from conversational_memory.domain.admission import evaluate_credential_admission
-from conversational_memory.domain.context import select_context
+from conversational_memory.domain.context import (
+    ContextExclusion,
+    ContextExclusionReason,
+    select_context,
+)
 from conversational_memory.domain.eligibility import is_current_state_eligible
 from conversational_memory.domain.idempotency import (
     RequestFingerprintInput,
@@ -24,6 +28,10 @@ from conversational_memory.domain.models import (
     Provenance,
 )
 from conversational_memory.domain.ranking import RetrievalCandidate, rank_candidates
+from conversational_memory.domain.relevance import (
+    is_relevant,
+    validate_relevance_threshold,
+)
 
 from .contracts import (
     AdmissionRequest,
@@ -31,11 +39,18 @@ from .contracts import (
     Embedding,
     ExistingAdmission,
     RequestContext,
+    RetrievalOutcome,
     RetrievalRequest,
     RetrievalResult,
     RetrievedMemory,
 )
-from .errors import AuthorizationError, IndexingError, StorageError, ValidationError
+from .errors import (
+    AuthorizationError,
+    ConfigurationError,
+    IndexingError,
+    StorageError,
+    ValidationError,
+)
 from .ports import (
     ClockPort,
     EmbeddingPort,
@@ -48,6 +63,7 @@ from .ports import (
 
 _M1_TOKENIZER = "cl100k_base"
 _PROCESS_WRITE_LOCK = Lock()
+_MISSING_RELEVANCE_THRESHOLD = object()
 
 
 class MemoryService:
@@ -63,6 +79,7 @@ class MemoryService:
         token_counter: TokenCounterPort,
         clock: ClockPort,
         memory_ids: MemoryIdPort,
+        relevance_threshold: object = _MISSING_RELEVANCE_THRESHOLD,
     ) -> None:
         self._idempotency = idempotency
         self._embedder = embedder
@@ -71,6 +88,12 @@ class MemoryService:
         self._token_counter = token_counter
         self._clock = clock
         self._memory_ids = memory_ids
+        try:
+            self._relevance_threshold = validate_relevance_threshold(
+                relevance_threshold
+            )
+        except ValueError as error:
+            raise ConfigurationError("invalid_relevance_threshold") from error
 
     def admit(self, context: RequestContext, request: AdmissionRequest) -> AdmissionResult:
         """Admit one memory using trusted identity and the approved M1 ordering."""
@@ -141,6 +164,7 @@ class MemoryService:
                 tokens_used=0,
                 included_memory_ids=(),
                 exclusions=(),
+                outcome=RetrievalOutcome.NO_ELIGIBLE_MEMORY,
             )
 
         query_embedding = self._embedder.embed(query)
@@ -163,6 +187,7 @@ class MemoryService:
             raise AuthorizationError("unauthorized_retrieval_result")
 
         candidates: list[RetrievalCandidate] = []
+        relevance_exclusions: list[ContextExclusion] = []
         scores_by_memory_id: dict[str, float] = {}
         for hit in hits:
             memory = memories_by_vector_id.get(hit.vector_id)
@@ -175,10 +200,34 @@ class MemoryService:
                 )
             ):
                 raise AuthorizationError("unauthorized_retrieval_result")
-            candidates.append(
-                RetrievalCandidate(memory=memory, relevance=hit.score, eligible=True)
-            )
             scores_by_memory_id[memory.memory_id] = hit.score
+            if is_relevant(
+                eligible=True,
+                score=hit.score,
+                threshold=self._relevance_threshold,
+            ):
+                candidates.append(
+                    RetrievalCandidate(memory=memory, relevance=hit.score, eligible=True)
+                )
+            else:
+                relevance_exclusions.append(
+                    ContextExclusion(
+                        memory_id=memory.memory_id,
+                        reason=ContextExclusionReason.BELOW_RELEVANCE_THRESHOLD,
+                    )
+                )
+
+        if not candidates:
+            return RetrievalResult(
+                memories=(),
+                context="",
+                tokenizer=_M1_TOKENIZER,
+                token_budget=token_budget,
+                tokens_used=0,
+                included_memory_ids=(),
+                exclusions=tuple(relevance_exclusions),
+                outcome=RetrievalOutcome.NO_RELEVANT_MEMORY,
+            )
 
         ranked = rank_candidates(candidates)
         try:
@@ -196,6 +245,11 @@ class MemoryService:
             )
             for memory in selection.selected_memories
         )
+        outcome = (
+            RetrievalOutcome.MEMORIES_SELECTED
+            if selected
+            else RetrievalOutcome.BUDGET_EXCLUDED
+        )
         return RetrievalResult(
             memories=selected,
             context=selection.context,
@@ -203,7 +257,8 @@ class MemoryService:
             token_budget=token_budget,
             tokens_used=selection.tokens_used,
             included_memory_ids=tuple(memory.memory_id for memory in selection.selected_memories),
-            exclusions=selection.exclusions,
+            exclusions=tuple(relevance_exclusions) + selection.exclusions,
+            outcome=outcome,
         )
 
     def _retry_indexing(

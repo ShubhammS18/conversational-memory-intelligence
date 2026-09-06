@@ -164,7 +164,7 @@ def test_seeded_ineligible_states_never_enter_current_state_results(
         create_if_missing=True,
     )
     states = [
-        (_memory("current"), IndexingState.INDEXED, 0.1),
+        (_memory("current"), IndexingState.INDEXED, 0.50),
         (_memory("pending"), IndexingState.PENDING, 1.0),
         (_memory("failed"), IndexingState.FAILED, 0.99),
         (
@@ -220,6 +220,7 @@ def test_seeded_ineligible_states_never_enter_current_state_results(
         token_counter=CharacterCounter(),
         clock=clock,
         memory_ids=UnusedMemoryIds(),
+        relevance_threshold=0.50,
     )
 
     result = service.retrieve(
@@ -267,6 +268,7 @@ def test_hydration_rechecks_eligibility_with_the_same_trusted_now(tmp_path: Path
         token_counter=CharacterCounter(),
         clock=clock,
         memory_ids=UnusedMemoryIds(),
+        relevance_threshold=0.50,
     )
 
     with pytest.raises(AuthorizationError, match="unauthorized_retrieval_result"):

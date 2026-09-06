@@ -9,6 +9,7 @@ from .contracts import (
     IndexingWork,
     PersistedPendingMemory,
     RequestContext,
+    RetrievalOutcome,
     RetrievalRequest,
     RetrievalResult,
     RetrievedMemory,
@@ -16,6 +17,7 @@ from .contracts import (
 )
 from .errors import (
     AuthorizationError,
+    ConfigurationError,
     ConfigurationMismatchError,
     IndexingError,
     ServiceUnavailableError,
@@ -38,6 +40,7 @@ __all__ = [
     "AdmissionResult",
     "AuthorizationError",
     "ClockPort",
+    "ConfigurationError",
     "ConfigurationMismatchError",
     "Embedding",
     "EmbeddingPort",
@@ -51,6 +54,7 @@ __all__ = [
     "MemoryService",
     "PersistedPendingMemory",
     "RequestContext",
+    "RetrievalOutcome",
     "RetrievalRequest",
     "RetrievalResult",
     "RetrievedMemory",

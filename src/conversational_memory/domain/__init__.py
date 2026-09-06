@@ -15,6 +15,7 @@ from .models import (
     Provenance,
 )
 from .ranking import RetrievalCandidate, rank_candidates
+from .relevance import is_relevant, validate_relevance_threshold
 
 __all__ = [
     "AdmissionDecision",
@@ -30,9 +31,11 @@ __all__ = [
     "RetrievalCandidate",
     "evaluate_credential_admission",
     "is_current_state_eligible",
+    "is_relevant",
     "normalize_idempotency_key",
     "rank_candidates",
     "request_fingerprint",
     "select_context",
     "serialize_memory_block",
+    "validate_relevance_threshold",
 ]

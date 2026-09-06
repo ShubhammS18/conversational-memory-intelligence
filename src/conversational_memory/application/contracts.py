@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import ConfigDict, Field, field_validator
@@ -138,6 +139,15 @@ class RetrievedMemory:
     score: float
 
 
+class RetrievalOutcome(StrEnum):
+    """Mutually exclusive high-level result of the retrieval workflow."""
+
+    MEMORIES_SELECTED = "memories_selected"
+    NO_ELIGIBLE_MEMORY = "no_eligible_memory"
+    NO_RELEVANT_MEMORY = "no_relevant_memory"
+    BUDGET_EXCLUDED = "budget_excluded"
+
+
 @pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class RetrievalResult:
     """Ordered selected memories and exact bounded M1 context evidence."""
@@ -149,6 +159,7 @@ class RetrievalResult:
     tokens_used: NonNegativeStrictInt
     included_memory_ids: tuple[StrictText, ...]
     exclusions: tuple[ContextExclusion, ...]
+    outcome: RetrievalOutcome
 
 
 @dataclass(frozen=True, slots=True)

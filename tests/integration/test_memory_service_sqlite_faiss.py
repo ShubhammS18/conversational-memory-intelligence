@@ -137,6 +137,7 @@ def _compose(
         token_counter=TiktokenTokenCounter(),
         clock=FixedClock(),
         memory_ids=memory_ids,
+        relevance_threshold=0.50,
     )
 
 

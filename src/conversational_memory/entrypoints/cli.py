@@ -27,6 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
         "demo-current-state",
         help="Run the real M2 current-state eligibility demonstration",
     )
+    subcommands.add_parser(
+        "demo-no-memory",
+        help="Run the real M3 explicit no-relevant-memory demonstration",
+    )
     return parser
 
 
@@ -86,6 +90,7 @@ def _demo_first_slice() -> int:
             clock=_UtcClock(),
             memory_ids=_UuidMemoryIds(),
             create_index_if_missing=True,
+            relevance_threshold=0.50,
         )
         owner = RequestContext(user_id="demo-user", request_id="demo-admit")
         admitted = service.admit(owner, request)
@@ -100,6 +105,7 @@ def _demo_first_slice() -> int:
             model_cache_directory=model_cache_directory,
             clock=_UtcClock(),
             memory_ids=_UuidMemoryIds(),
+            relevance_threshold=0.50,
         )
         retrieval = restarted.retrieve(
             RequestContext(user_id="demo-user", request_id="demo-retrieve"),
@@ -193,6 +199,7 @@ def _demo_current_state() -> int:
             clock=_FixedClock(now),
             memory_ids=_UuidMemoryIds(),
             create_index_if_missing=True,
+            relevance_threshold=0.50,
         )
         admissions = {}
         for name, valid_from, valid_until in scenarios:
@@ -235,6 +242,77 @@ def _demo_current_state() -> int:
     return 0
 
 
+def _demo_no_memory() -> int:
+    from conversational_memory.application import (
+        AdmissionRequest,
+        RequestContext,
+        RetrievalOutcome,
+        RetrievalRequest,
+    )
+    from conversational_memory.composition import compose_local_memory_service
+
+    relevance_threshold = 0.50
+    query = "What is my favorite programming language?"
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m3-") as temporary:
+        root = Path(temporary)
+        service = compose_local_memory_service(
+            database_path=root / "memory.sqlite3",
+            index_directory=root / "index",
+            model_cache_directory=_model_cache_directory(),
+            clock=_UtcClock(),
+            memory_ids=_UuidMemoryIds(),
+            create_index_if_missing=True,
+            relevance_threshold=relevance_threshold,
+        )
+        admission = service.admit(
+            RequestContext(user_id="demo-user", request_id="m3-admit"),
+            AdmissionRequest(
+                idempotency_key="m3-unrelated-memory",
+                conversation_id="machine-learning-project",
+                turn_id="m3-unrelated-memory",
+                content="I prefer FAISS for vector search in machine learning projects.",
+                memory_type="preference",
+                subject="vector search",
+                value="FAISS",
+                source_type="explicit_user",
+            ),
+        )
+        result = service.retrieve(
+            RequestContext(user_id="demo-user", request_id="m3-retrieve"),
+            RetrievalRequest(query=query, limit=5, token_budget=128),
+        )
+        if admission.memory_id is None or not admission.retrievable:
+            raise RuntimeError("M3 demo memory did not become retrievable")
+        if result.outcome is not RetrievalOutcome.NO_RELEVANT_MEMORY:
+            raise RuntimeError("M3 demo did not return no_relevant_memory")
+        if result.memories or result.context or result.included_memory_ids:
+            raise RuntimeError("M3 demo forced an unrelated memory into context")
+        if len(result.exclusions) != 1 or (
+            result.exclusions[0].memory_id != admission.memory_id
+            or result.exclusions[0].reason.value != "below_relevance_threshold"
+        ):
+            raise RuntimeError("M3 demo relevance exclusion evidence is invalid")
+
+        output = {
+            "query": query,
+            "relevance_threshold": relevance_threshold,
+            "outcome": result.outcome.value,
+            "selected_memory_ids": list(result.included_memory_ids),
+            "context": result.context,
+            "token_budget": result.token_budget,
+            "tokens_used": result.tokens_used,
+            "exclusions": [
+                {
+                    "memory_id": exclusion.memory_id,
+                    "reason": exclusion.reason.value,
+                }
+                for exclusion in result.exclusions
+            ],
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -243,6 +321,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_first_slice()
     if arguments.command == "demo-current-state":
         return _demo_current_state()
+    if arguments.command == "demo-no-memory":
+        return _demo_no_memory()
     return 0
 
 

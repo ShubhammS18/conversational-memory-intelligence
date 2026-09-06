@@ -1,7 +1,7 @@
 {
   "$comment": "nodes=modules, edges=[cause,effect] where cause is imported-by effect. ADD invariants by hand.",
   "project": "conversational-memory-intelligence",
-  "generated": "2026-08-28T12:41:43.807Z",
+  "generated": "2026-09-06T14:14:38Z",
   "nodes": [
     "external:csv",
     "external:datetime",
@@ -217,6 +217,7 @@
   "invariants": {
     "ownership_isolation": "A memory must never be returned to a user who does not own it.",
     "current_state_context_eligibility": "A current-state context must not include a deleted, pending, failed, expired, or superseded memory.",
+    "no_forced_nearest_match": "When no M2-eligible candidate meets the approved relevance threshold, retrieval must return a successful empty no_relevant_memory result rather than force the nearest candidate into context.",
     "forgetting_is_global_and_nonreactivating": "After an authorized forget request is accepted, that memory must be unavailable through every retrieval path, and forgetting a newer memory must not reactivate an older superseded memory."
   },
   "freeze_boundary": [

@@ -33,13 +33,13 @@
   <p class="sub"><b>Rolling source of truth for what is LIVE right now.</b> The wiki can lag; this file
      cannot. Read this on every session start to avoid rebuilding what exists. This is your
      <i>git-like restart point</i>: if context is lost, this file rehydrates you.
-     Last updated: <code>{{TIMESTAMP}}</code> · by loop: <code>{{LOOP_ID}}</code></p>
+     Last updated: <code>2026-09-06T14:14:38Z</code> · by loop: <code>D5-final-audit</code></p>
 
   <!-- ───────────── ONE-LINE STATUS ───────────── -->
   <div class="card live">
-    <b>Now in flight:</b> {{NOW_IN_FLIGHT}}<br>
-    <b>Active loop:</b> {{ACTIVE_LOOP}} · <b>Current milestone:</b> {{MILESTONE_ID}} · <b>Phase:</b> {{PHASE}}<br>
-    <b>Blocked on:</b> {{BLOCKERS}}
+    <b>Now in flight:</b> No implementation work; M1–M3 are complete and M4 has not started.<br>
+    <b>Active loop:</b> NOT_STARTED · <b>Current milestone:</b> M4 · <b>Phase:</b> G0 not started<br>
+    <b>Blocked on:</b> Explicit authorization to begin the M4 G0 existence preflight.
   </div>
 
   <!-- ───────────── WHAT'S LIVE ───────────── -->
@@ -48,10 +48,10 @@
     <table>
       <thead><tr><th>Capability</th><th>Where (file/route/symbol)</th><th>Status</th><th>Verified by</th></tr></thead>
       <tbody>
-        <tr><td>{{CAP_1}}</td><td><code>{{LOC_1}}</code></td><td><span class="pill live">live</span></td><td>{{VERIFY_1}}</td></tr>
-        <tr><td>{{CAP_2}}</td><td><code>{{LOC_2}}</code></td><td><span class="pill wip">partial</span></td><td>—</td></tr>
         <tr><td>M1 persisted end-to-end memory slice</td><td><code>src/conversational_memory/</code> · <code>demo-first-slice</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; exact editable install; 112 locked, 2 real-model, and 182 full-suite tests; three-question human quiz passed</td></tr>
-        <tr><td>add rows as milestones complete…</td><td></td><td></td><td></td></tr>
+        <tr><td>M2 current-state filtering</td><td><code>domain/eligibility.py</code> · SQLite allowlist and hydration · <code>demo-current-state</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 68 exact-plan and 200 full-suite tests; real-model demo and checks; three-question human quiz passed</td></tr>
+        <tr><td>M3 explicit no-relevant-memory result</td><td><code>domain/relevance.py</code> · retrieval orchestration · <code>demo-no-memory</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 86 exact-plan and 221 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
+        <tr><td>M4 supersession and conflict handling</td><td><code>PLAN.md</code></td><td><span class="pill">not started</span></td><td>—</td></tr>
       </tbody>
     </table>
     <p class="note">Append a row the moment a milestone passes L4 VERIFY. The grep in G0 checks against this table.</p>
@@ -61,8 +61,11 @@
   <h2>Decisions that constrain new work</h2>
   <div class="card">
     <ul>
-      <li><code>{{DECISION_ID}}</code> — {{DECISION_SUMMARY}} → see <code>decisions/{{DECISION_ID}}.md</code></li>
-      <li>add ADR pointers here so future loops don't relitigate settled calls</li>
+      <li>Decision index: <a href="decisions/decisions-manifest.md"><code>decisions/decisions-manifest.md</code></a>.</li>
+      <li>M1 bindings and review evidence: <a href="decisions/M1-implementation-bindings.md"><code>M1-implementation-bindings</code></a> · <a href="checkpoints/M1.md"><code>checkpoints/M1.md</code></a>.</li>
+      <li>M2 current-state binding and review evidence: <a href="decisions/M2-current-state-eligibility-bindings.md"><code>M2-current-state-eligibility-bindings</code></a> · <a href="checkpoints/M2.md"><code>checkpoints/M2.md</code></a>.</li>
+      <li>M3 threshold binding and review evidence: <a href="decisions/M3-relevance-threshold.md"><code>M3-relevance-threshold</code></a> · <a href="checkpoints/M3.md"><code>checkpoints/M3.md</code></a>.</li>
+      <li>High-risk infrastructure checkpoint and incident history: <a href="checkpoints/M1.md"><code>checkpoints/M1.md</code></a>; recovery scope and remaining limitation: <a href="../experiments/d4_engineering_reality/recovery_analysis.md"><code>recovery_analysis.md</code></a>. These links are evidence pointers, not replacements for the governing ADRs.</li>
     </ul>
   </div>
 
@@ -75,7 +78,7 @@
     <table>
       <thead><tr><th>Date</th><th>Milestone</th><th>Planned approach</th><th>Actual approach</th><th>Reason</th><th>Invariant impact</th></tr></thead>
       <tbody>
-        <tr><td colspan="6" style="color:var(--mut);font-style:italic">no deviations yet — append a row when a plan change occurs</td></tr>
+        <tr><td colspan="6" style="color:var(--mut);font-style:italic">Historical verification incidents and limitations are preserved in the M1–M3 checkpoint records linked above.</td></tr>
       </tbody>
     </table>
   </div>
@@ -84,8 +87,8 @@
   <h2>Known gaps &amp; the ordered Next list</h2>
   <div class="card">
     <ol>
-      <li>{{NEXT_1}}</li>
-      <li>{{NEXT_2}}</li>
+      <li>When explicitly authorized, begin M4 with its G0 existence preflight; no M4 work has started.</li>
+      <li>Keep recovery and reconciliation within the planned M8 milestone; do not infer it from the completed M1–M3 slices.</li>
     </ol>
     <p class="note">Mirror of <code>checkpoints/CURRENT.md → next_action</code>, but human-readable and durable across compaction.</p>
   </div>
@@ -93,7 +96,7 @@
   <!-- ───────────── SESSION LOG (append-only) ───────────── -->
   <h2>Session log (append-only, newest first)</h2>
   <div class="card">
-    <p><code>{{TIMESTAMP}}</code> — {{SESSION_SUMMARY}}</p>
+    <p><code>2026-09-06T14:14:38Z</code> — D5 final audit synchronized the completed M1–M3 and not-started M4 state, consolidated evidence pointers, and refreshed context-graph metadata without starting implementation work.</p>
     <p class="note">One paragraph per session: what shipped, what broke, what's next. This is the narrative the next cold session reads first.</p>
   </div>
 

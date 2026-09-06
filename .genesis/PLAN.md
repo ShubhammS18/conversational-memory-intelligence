@@ -91,6 +91,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M2 — Current-State Filtering
 
+- **Progress:** Complete on 2026-09-03 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** Current-state retrieval returns only memories that are owned by the caller, active, indexed, and valid at the trusted current time.
 - **Included behavior:** Deterministic ownership, indexing-state, deletion-state, lifecycle, and validity filtering before ranking; policy precedence over similarity; seeded-state coverage for pending, failed, expired, superseded, and deleted records.
 - **Exclusions:** Automatic supersession, historical retrieval, automatic expiration transition, forgetting operations, reconciliation, full event coverage, and fixed-workload evaluation.
@@ -113,6 +114,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M3 — Explicit No-Relevant-Memory Result
 
+- **Progress:** Complete on 2026-09-06 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** An unrelated query returns a successful empty result and context with `no_relevant_memory` instead of forcing the nearest vector match.
 - **Included behavior:** An explicitly configured relevance threshold; empty selected-memory list; empty context; structured exclusion and no-memory reason; normal success semantics; an explicit M3 configuration decision selecting and documenting the threshold.
 - **Threshold decision:** No numeric default relevance threshold is currently approved. M3 must select the initial configured value using the existing D4 no-memory evidence and new boundary tests. The selected value, comparison semantics, and rationale must be recorded in approved configuration or a decision record before M3 can be marked complete. G5 does not assign a numeric value.
@@ -142,6 +144,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M4 — Supersession and Conflict Handling
 
+- **Progress:** Not started · awaits explicit authorization for the G0 existence preflight.
 - **Observable outcome:** A clear newer correction supersedes the specific older memory, and only the new memory influences current-state retrieval.
 - **Included behavior:** Explicit supersession relationship; newer-first ranking; explicit-over-inferred authority; stable-ID final tie-breaker; uncertain conflict remains unsuperseded or temporary rather than silently overwriting state.
 - **Exclusions:** Historical retrieval, automatic expiration, forgetting, recovery, observability rollout, and fixed-workload completion.

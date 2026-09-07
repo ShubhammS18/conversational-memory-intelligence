@@ -32,6 +32,7 @@ from conversational_memory.domain.relevance import (
     is_relevant,
     validate_relevance_threshold,
 )
+from conversational_memory.domain.supersession import validate_supersession_target
 
 from .contracts import (
     AdmissionRequest,
@@ -88,6 +89,7 @@ class MemoryService:
         self._token_counter = token_counter
         self._clock = clock
         self._memory_ids = memory_ids
+        self._known_published_supersessions: set[tuple[str, str, int, str]] = set()
         try:
             self._relevance_threshold = validate_relevance_threshold(
                 relevance_threshold
@@ -110,7 +112,11 @@ class MemoryService:
                     raise ValidationError("idempotency_key_conflict")
                 if existing.result.indexing_state is IndexingState.INDEXED:
                     return existing.result
-                return self._retry_indexing(context, existing)
+                return self._retry_indexing(
+                    context,
+                    existing,
+                    supersedes_memory_id=request.supersedes_memory_id,
+                )
 
             policy_result = evaluate_credential_admission(fingerprint_input)
             if policy_result.decision is not AdmissionDecision.ACCEPTED:
@@ -123,9 +129,32 @@ class MemoryService:
                 )
 
             content = normalize_text(request.content)
-            embedding = self._embedder.embed(content)
-            created_at = self._clock.now()
-            memory = self._new_memory(context, request, content, created_at)
+            target_memory_id = request.supersedes_memory_id
+            if target_memory_id is not None:
+                created_at = self._clock.now()
+                memory = self._new_memory(context, request, content, created_at)
+                target = self._repository.find_supersession_target(
+                    user_id=context.user_id,
+                    memory_id=target_memory_id,
+                )
+                if target is None:
+                    raise ValidationError("invalid_supersession_target")
+                try:
+                    validate_supersession_target(
+                        target=target,
+                        user_id=context.user_id,
+                        replacement_memory_id=memory.memory_id,
+                        replacement_authority=memory.provenance.authority,
+                        replacement_subject=memory.subject,
+                        replacement_memory_type=memory.memory_type,
+                    )
+                except ValueError as error:
+                    raise ValidationError("invalid_supersession_target") from error
+                embedding = self._embedder.embed(content)
+            else:
+                embedding = self._embedder.embed(content)
+                created_at = self._clock.now()
+                memory = self._new_memory(context, request, content, created_at)
             persisted = self._repository.persist_pending(
                 memory=memory,
                 embedding=embedding,
@@ -138,6 +167,7 @@ class MemoryService:
                 memory_id=persisted.memory.memory_id,
                 vector_id=persisted.vector_id,
                 embedding=embedding,
+                supersedes_memory_id=target_memory_id,
             )
 
     def retrieve(
@@ -265,6 +295,8 @@ class MemoryService:
         self,
         context: RequestContext,
         existing: ExistingAdmission,
+        *,
+        supersedes_memory_id: str | None,
     ) -> AdmissionResult:
         work = existing.indexing_work
         if work is None or existing.result.memory_id != work.memory_id:
@@ -276,11 +308,26 @@ class MemoryService:
             )
         elif existing.result.indexing_state is not IndexingState.PENDING:
             raise StorageError("Stored indexing state cannot be retried")
+        if supersedes_memory_id is not None:
+            publication_key = (
+                context.user_id,
+                work.memory_id,
+                work.vector_id,
+                supersedes_memory_id,
+            )
+            if publication_key in self._known_published_supersessions:
+                return self._acknowledge_published_supersession(
+                    context=context,
+                    memory_id=work.memory_id,
+                    vector_id=work.vector_id,
+                    supersedes_memory_id=supersedes_memory_id,
+                )
         return self._index_and_acknowledge(
             context=context,
             memory_id=work.memory_id,
             vector_id=work.vector_id,
             embedding=work.embedding,
+            supersedes_memory_id=supersedes_memory_id,
         )
 
     def _index_and_acknowledge(
@@ -290,6 +337,7 @@ class MemoryService:
         memory_id: str,
         vector_id: int,
         embedding: Embedding,
+        supersedes_memory_id: str | None = None,
     ) -> AdmissionResult:
         try:
             self._vector_index.add(vector_id=vector_id, embedding=embedding)
@@ -302,6 +350,21 @@ class MemoryService:
                 indexing_state=indexing_state,
                 retrievable=False,
                 retryable_error=str(error),
+            )
+
+        if supersedes_memory_id is not None:
+            publication_key = (
+                context.user_id,
+                memory_id,
+                vector_id,
+                supersedes_memory_id,
+            )
+            self._known_published_supersessions.add(publication_key)
+            return self._acknowledge_published_supersession(
+                context=context,
+                memory_id=memory_id,
+                vector_id=vector_id,
+                supersedes_memory_id=supersedes_memory_id,
             )
 
         try:
@@ -325,6 +388,46 @@ class MemoryService:
             memory_id=memory_id,
             indexing_state=IndexingState.INDEXED,
             retrievable=True,
+        )
+
+    def _acknowledge_published_supersession(
+        self,
+        *,
+        context: RequestContext,
+        memory_id: str,
+        vector_id: int,
+        supersedes_memory_id: str,
+    ) -> AdmissionResult:
+        publication_key = (
+            context.user_id,
+            memory_id,
+            vector_id,
+            supersedes_memory_id,
+        )
+        try:
+            self._repository.acknowledge_supersession(
+                user_id=context.user_id,
+                replacement_memory_id=memory_id,
+                target_memory_id=supersedes_memory_id,
+            )
+        except StorageError as error:
+            return AdmissionResult(
+                decision=AdmissionDecision.ACCEPTED,
+                reason="supersession_acknowledgement_failed",
+                memory_id=memory_id,
+                indexing_state=IndexingState.PENDING,
+                retrievable=False,
+                retryable_error=str(error),
+            )
+
+        self._known_published_supersessions.discard(publication_key)
+        return AdmissionResult(
+            decision=AdmissionDecision.ACCEPTED,
+            reason="accepted_and_indexed",
+            memory_id=memory_id,
+            indexing_state=IndexingState.INDEXED,
+            retrievable=True,
+            supersedes_memory_ids=(supersedes_memory_id,),
         )
 
     @staticmethod
@@ -370,6 +473,7 @@ class MemoryService:
             source_event_at=request.source_event_at,
             valid_from=request.valid_from,
             valid_until=request.valid_until,
+            supersedes_memory_id=request.supersedes_memory_id,
         )
         try:
             idempotency_key = normalize_idempotency_key(request.idempotency_key)

@@ -144,7 +144,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M4 — Supersession and Conflict Handling
 
-- **Progress:** Not started · awaits explicit authorization for the G0 existence preflight.
+- **Progress:** Complete on 2026-09-07 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** A clear newer correction supersedes the specific older memory, and only the new memory influences current-state retrieval.
 - **Included behavior:** Explicit supersession relationship; newer-first ranking; explicit-over-inferred authority; stable-ID final tie-breaker; uncertain conflict remains unsuperseded or temporary rather than silently overwriting state.
 - **Exclusions:** Historical retrieval, automatic expiration, forgetting, recovery, observability rollout, and fixed-workload completion.

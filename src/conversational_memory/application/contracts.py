@@ -51,6 +51,16 @@ class AdmissionRequest:
     source_event_at: datetime | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
+    supersedes_memory_id: StrictText | None = None
+
+    @field_validator("supersedes_memory_id")
+    @classmethod
+    def _require_nonempty_supersession_target(cls, value: str | None) -> str | None:
+        if value is not None and (not value or value != value.strip()):
+            raise ValueError(
+                "supersedes_memory_id must not contain surrounding whitespace"
+            )
+        return value
 
 
 @pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
@@ -102,6 +112,8 @@ class AdmissionResult:
     indexing_state: IndexingState | None
     retrievable: StrictBoolean
     retryable_error: StrictText | None = None
+    supersedes_memory_ids: tuple[StrictText, ...] = ()
+    superseded_by_memory_id: StrictText | None = None
 
 
 @dataclass(frozen=True, slots=True)

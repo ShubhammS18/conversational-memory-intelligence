@@ -42,6 +42,18 @@ class MemoryRepositoryPort(Protocol):
         request_fingerprint: str,
     ) -> PersistedPendingMemory: ...
 
+    def find_supersession_target(
+        self, *, user_id: str, memory_id: str
+    ) -> MemoryRecord | None: ...
+
+    def acknowledge_supersession(
+        self,
+        *,
+        user_id: str,
+        replacement_memory_id: str,
+        target_memory_id: str,
+    ) -> None: ...
+
     def mark_indexed(self, *, user_id: str, memory_id: str) -> None: ...
 
     def mark_pending(self, *, user_id: str, memory_id: str) -> None: ...

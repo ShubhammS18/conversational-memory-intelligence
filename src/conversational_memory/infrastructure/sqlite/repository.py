@@ -31,6 +31,7 @@ from conversational_memory.domain.models import (
     MemoryType,
     Provenance,
 )
+from conversational_memory.domain.supersession import validate_supersession_target
 
 from .migrations import initialize_schema
 
@@ -148,6 +149,109 @@ class SQLiteMemoryRepository:
                 raise StorageError("SQLite pending-memory transaction failed") from error
 
         return PersistedPendingMemory(memory=memory, vector_id=vector_id)
+
+    def find_supersession_target(
+        self,
+        *,
+        user_id: str,
+        memory_id: str,
+    ) -> MemoryRecord | None:
+        """Resolve an explicit target only within its trusted owner scope."""
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    "SELECT * FROM memories WHERE user_id = ? AND memory_id = ?",
+                    (user_id, memory_id),
+                ).fetchone()
+            return None if row is None else _row_to_memory(row)
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise StorageError("SQLite supersession target lookup failed") from error
+
+    def acknowledge_supersession(
+        self,
+        *,
+        user_id: str,
+        replacement_memory_id: str,
+        target_memory_id: str,
+    ) -> None:
+        """Atomically activate a replacement and persist both relationship directions."""
+        with _WRITE_LOCK:
+            try:
+                with self._connection() as connection:
+                    try:
+                        connection.execute("BEGIN IMMEDIATE")
+                        replacement_row = connection.execute(
+                            "SELECT * FROM memories WHERE user_id = ? AND memory_id = ?",
+                            (user_id, replacement_memory_id),
+                        ).fetchone()
+                        target_row = connection.execute(
+                            "SELECT * FROM memories WHERE user_id = ? AND memory_id = ?",
+                            (user_id, target_memory_id),
+                        ).fetchone()
+                        if replacement_row is None or target_row is None:
+                            raise StorageError("SQLite supersession transition rejected")
+
+                        replacement = _row_to_memory(replacement_row)
+                        target = _row_to_memory(target_row)
+                        if (
+                            replacement.memory_id == target.memory_id
+                            or replacement.lifecycle_status is not LifecycleStatus.ACTIVE
+                            or replacement.indexing_state is not IndexingState.PENDING
+                            or replacement.supersedes
+                            or replacement.superseded_by is not None
+                        ):
+                            raise StorageError("SQLite supersession transition rejected")
+                        try:
+                            validate_supersession_target(
+                                target=target,
+                                user_id=user_id,
+                                replacement_memory_id=replacement.memory_id,
+                                replacement_authority=replacement.provenance.authority,
+                                replacement_subject=replacement.subject,
+                                replacement_memory_type=replacement.memory_type,
+                            )
+                        except ValueError as error:
+                            raise StorageError(
+                                "SQLite supersession transition rejected"
+                            ) from error
+
+                        replacement_cursor = connection.execute(
+                            """
+                            UPDATE memories
+                            SET indexing_state = 'indexed', indexing_error = NULL,
+                                supersedes_json = ?
+                            WHERE user_id = ? AND memory_id = ?
+                              AND lifecycle_status = 'active'
+                              AND indexing_state = 'pending'
+                              AND superseded_by IS NULL
+                              AND supersedes_json = '[]'
+                            """,
+                            (_json_text((target_memory_id,)), user_id, replacement_memory_id),
+                        )
+                        target_cursor = connection.execute(
+                            """
+                            UPDATE memories
+                            SET lifecycle_status = 'superseded', superseded_by = ?
+                            WHERE user_id = ? AND memory_id = ?
+                              AND lifecycle_status = 'active'
+                              AND indexing_state = 'indexed'
+                              AND superseded_by IS NULL
+                            """,
+                            (replacement_memory_id, user_id, target_memory_id),
+                        )
+                        if replacement_cursor.rowcount != 1 or target_cursor.rowcount != 1:
+                            raise StorageError("SQLite supersession transition rejected")
+                        connection.commit()
+                    except StorageError:
+                        connection.rollback()
+                        raise
+                    except (sqlite3.Error, TypeError, ValueError) as error:
+                        connection.rollback()
+                        raise StorageError("SQLite supersession transaction failed") from error
+            except StorageError:
+                raise
+            except sqlite3.Error as error:
+                raise StorageError("SQLite supersession transaction failed") from error
 
     def mark_indexed(self, *, user_id: str, memory_id: str) -> None:
         self._transition(
@@ -393,6 +497,8 @@ def _result_for(memory: MemoryRecord, indexing_error: str | None) -> AdmissionRe
         indexing_state=memory.indexing_state,
         retrievable=memory.indexing_state is IndexingState.INDEXED,
         retryable_error=indexing_error,
+        supersedes_memory_ids=memory.supersedes,
+        superseded_by_memory_id=memory.superseded_by,
     )
 
 

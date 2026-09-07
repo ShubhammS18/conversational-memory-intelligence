@@ -83,3 +83,5 @@ Any cross-user disclosure, sensitive-memory retention, retrieval of deleted or i
 - [`M2-freeze-boundary-exceptions`](M2-freeze-boundary-exceptions.md) — exactly five M2-only Genesis paths for mandatory checkpoint evidence and scoped decision/manifest records.
 - [`M3-relevance-threshold`](M3-relevance-threshold.md) — exact `0.50` relevance boundary, inclusive comparison, fail-closed configuration, and distinct empty-result semantics for M3.
 - [`M3-freeze-boundary-exceptions`](M3-freeze-boundary-exceptions.md) — four M3-only Genesis governance paths plus seven exact test-maintenance paths for explicit threshold injection and one current-state fixture-boundary adjustment.
+- [`M4-supersession-and-conflict-bindings`](M4-supersession-and-conflict-bindings.md) — one-target explicit supersession, fail-closed target validation, indexing-before-linking, atomic bidirectional relationships, idempotent retry, and no-reactivation rules.
+- [`M4-freeze-boundary-exceptions`](M4-freeze-boundary-exceptions.md) — exactly five M4-only Genesis paths for current-loop evidence and scoped decision, checkpoint, exception, and manifest records.

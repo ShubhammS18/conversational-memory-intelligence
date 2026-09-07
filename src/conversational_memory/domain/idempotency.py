@@ -25,6 +25,7 @@ class RequestFingerprintInput:
     source_event_at: datetime | None
     valid_from: datetime | None
     valid_until: datetime | None
+    supersedes_memory_id: str | None = None
 
 
 def normalize_text(value: str) -> str:
@@ -55,6 +56,10 @@ def canonical_request_json(request: RequestFingerprintInput) -> str:
         "valid_until": _normalize_timestamp(request.valid_until),
         "value": _normalize_json_value(request.value),
     }
+    if request.supersedes_memory_id is not None:
+        body["supersedes_memory_id"] = _opaque_stable_id(
+            "supersedes_memory_id", request.supersedes_memory_id
+        )
     return json.dumps(
         body,
         ensure_ascii=False,
@@ -75,6 +80,12 @@ def _required_text(field_name: str, value: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
+
+def _opaque_stable_id(field_name: str, value: str) -> str:
+    if not value or value != value.strip():
+        raise ValueError(f"{field_name} must not contain surrounding whitespace")
+    return value
 
 
 def _normalize_timestamp(value: datetime | None) -> str | None:

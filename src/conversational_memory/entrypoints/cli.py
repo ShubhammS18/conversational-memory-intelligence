@@ -31,6 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
         "demo-no-memory",
         help="Run the real M3 explicit no-relevant-memory demonstration",
     )
+    subcommands.add_parser(
+        "demo-supersession",
+        help="Run the real M4 explicit supersession and restart demonstration",
+    )
     return parser
 
 
@@ -50,6 +54,14 @@ class _FixedClock:
 class _UuidMemoryIds:
     def new_id(self) -> str:
         return str(uuid.uuid4())
+
+
+class _SequenceMemoryIds:
+    def __init__(self, *memory_ids: str) -> None:
+        self._memory_ids = iter(memory_ids)
+
+    def new_id(self) -> str:
+        return next(self._memory_ids)
 
 
 def _model_cache_directory() -> Path:
@@ -313,6 +325,170 @@ def _demo_no_memory() -> int:
     return 0
 
 
+def _demo_supersession() -> int:
+    from conversational_memory.application import (
+        AdmissionRequest,
+        RequestContext,
+        RetrievalRequest,
+        ValidationError,
+    )
+    from conversational_memory.composition import compose_local_memory_service
+
+    now = datetime(2026, 9, 6, 12, tzinfo=UTC)
+    original_request = AdmissionRequest(
+        idempotency_key="m4-original",
+        conversation_id="m4-demo-conversation",
+        turn_id="m4-original",
+        content="I prefer FAISS for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="FAISS",
+        source_type="explicit_user",
+    )
+    replacement_request = AdmissionRequest(
+        idempotency_key="m4-replacement",
+        conversation_id="m4-demo-conversation",
+        turn_id="m4-replacement",
+        content="I prefer PostgreSQL for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="PostgreSQL",
+        source_type="explicit_user",
+        supersedes_memory_id="m4-original-memory",
+    )
+    ambiguous_request = AdmissionRequest(
+        idempotency_key="m4-ambiguous",
+        conversation_id="m4-demo-conversation",
+        turn_id="m4-ambiguous",
+        content="Perhaps another vector database might be preferable.",
+        memory_type="preference",
+        subject="vector database",
+        value="uncertain",
+        source_type="inferred",
+        supersedes_memory_id="m4-replacement-memory",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m4-") as temporary:
+        root = Path(temporary)
+        database_path = root / "memory.sqlite3"
+        index_directory = root / "index"
+        service = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(
+                "m4-original-memory",
+                "m4-replacement-memory",
+            ),
+            create_index_if_missing=True,
+            relevance_threshold=0.50,
+        )
+        owner = RequestContext(user_id="demo-user", request_id="m4-original")
+        original = service.admit(owner, original_request)
+        replacement = service.admit(
+            RequestContext(user_id="demo-user", request_id="m4-replacement"),
+            replacement_request,
+        )
+
+        restarted = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds("m4-ambiguous-memory"),
+            relevance_threshold=0.50,
+        )
+        replayed_original = restarted.admit(
+            RequestContext(user_id="demo-user", request_id="m4-original-replay"),
+            original_request,
+        )
+        replayed_replacement = restarted.admit(
+            RequestContext(user_id="demo-user", request_id="m4-replacement-replay"),
+            replacement_request,
+        )
+        before_ambiguous = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m4-before-ambiguous"),
+            RetrievalRequest(
+                query=replacement_request.content,
+                limit=5,
+                token_budget=128,
+            ),
+        )
+        ambiguous_reason = ""
+        try:
+            restarted.admit(
+                RequestContext(user_id="demo-user", request_id="m4-ambiguous"),
+                ambiguous_request,
+            )
+        except ValidationError as error:
+            ambiguous_reason = error.reason
+        after_ambiguous = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m4-after-ambiguous"),
+            RetrievalRequest(
+                query=replacement_request.content,
+                limit=5,
+                token_budget=128,
+            ),
+        )
+
+        if not original.retrievable or original.memory_id != "m4-original-memory":
+            raise RuntimeError("M4 demo original admission failed")
+        if not replacement.retrievable or replacement.memory_id != "m4-replacement-memory":
+            raise RuntimeError("M4 demo replacement admission failed")
+        if replayed_original.memory_id != original.memory_id:
+            raise RuntimeError("M4 demo restart lost the original record")
+        if replayed_replacement != replacement:
+            raise RuntimeError("M4 demo restart lost the replacement record")
+        if before_ambiguous.included_memory_ids != (replacement.memory_id,):
+            raise RuntimeError("M4 demo did not select only the replacement")
+        if replayed_replacement.supersedes_memory_ids != (original.memory_id,):
+            raise RuntimeError("M4 demo replacement relationship was not durable")
+        if replayed_original.superseded_by_memory_id != replacement.memory_id:
+            raise RuntimeError("M4 demo original relationship was not durable")
+        atomic_bidirectional_commit = (
+            replayed_replacement.supersedes_memory_ids == (original.memory_id,)
+            and replayed_original.superseded_by_memory_id == replacement.memory_id
+        )
+        if ambiguous_reason != "invalid_supersession_target":
+            raise RuntimeError("M4 demo ambiguous target was not rejected")
+        if after_ambiguous != before_ambiguous:
+            raise RuntimeError("M4 demo ambiguous input mutated current retrieval")
+
+        output = {
+            "original_admission": {
+                "memory_id": original.memory_id,
+                "indexed": original.retrievable,
+            },
+            "replacement_admission": {
+                "memory_id": replacement.memory_id,
+                "indexed": replacement.retrievable,
+            },
+            "relationships": {
+                "replacement_supersedes": list(
+                    replayed_replacement.supersedes_memory_ids
+                ),
+                "original_superseded_by": replayed_original.superseded_by_memory_id,
+                "atomic_bidirectional_commit": atomic_bidirectional_commit,
+            },
+            "restart": {
+                "original_record_preserved": replayed_original.memory_id
+                == original.memory_id,
+                "replacement_record_preserved": replayed_replacement == replacement,
+            },
+            "current_state_retrieval": {
+                "selected_memory_ids": list(before_ambiguous.included_memory_ids),
+                "context": before_ambiguous.context,
+            },
+            "ambiguous_target": {
+                "rejection_reason": ambiguous_reason,
+                "current_state_unchanged": after_ambiguous == before_ambiguous,
+            },
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -323,6 +499,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_current_state()
     if arguments.command == "demo-no-memory":
         return _demo_no_memory()
+    if arguments.command == "demo-supersession":
+        return _demo_supersession()
     return 0
 
 

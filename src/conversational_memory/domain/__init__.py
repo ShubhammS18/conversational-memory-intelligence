@@ -16,6 +16,7 @@ from .models import (
 )
 from .ranking import RetrievalCandidate, rank_candidates
 from .relevance import is_relevant, validate_relevance_threshold
+from .supersession import validate_supersession_target
 
 __all__ = [
     "AdmissionDecision",
@@ -38,4 +39,5 @@ __all__ = [
     "select_context",
     "serialize_memory_block",
     "validate_relevance_threshold",
+    "validate_supersession_target",
 ]

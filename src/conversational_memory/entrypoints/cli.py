@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import tempfile
 import uuid
 from collections.abc import Sequence
@@ -34,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser(
         "demo-supersession",
         help="Run the real M4 explicit supersession and restart demonstration",
+    )
+    subcommands.add_parser(
+        "demo-history",
+        help="Run the real M5 current-versus-historical retrieval demonstration",
     )
     return parser
 
@@ -489,6 +494,194 @@ def _demo_supersession() -> int:
     return 0
 
 
+def _demo_history() -> int:
+    from conversational_memory.application import (
+        AdmissionRequest,
+        RequestContext,
+        RetrievalIntent,
+        RetrievalRequest,
+    )
+    from conversational_memory.composition import compose_local_memory_service
+
+    now = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    original_request = AdmissionRequest(
+        idempotency_key="m5-original",
+        conversation_id="m5-demo-conversation",
+        turn_id="m5-original",
+        content="I prefer FAISS for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="FAISS",
+        source_type="explicit_user",
+    )
+    replacement_request = AdmissionRequest(
+        idempotency_key="m5-replacement",
+        conversation_id="m5-demo-conversation",
+        turn_id="m5-replacement",
+        content="I prefer PostgreSQL for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="PostgreSQL",
+        source_type="explicit_user",
+        supersedes_memory_id="m5-original-memory",
+    )
+    deleted_request = AdmissionRequest(
+        idempotency_key="m5-deleted",
+        conversation_id="m5-demo-conversation",
+        turn_id="m5-deleted",
+        content="I prefer FAISS for vector database search.",
+        memory_type="preference",
+        subject="deleted vector database",
+        value="FAISS",
+        source_type="explicit_user",
+    )
+    other_owner_request = AdmissionRequest(
+        idempotency_key="m5-other-owner",
+        conversation_id="m5-demo-conversation",
+        turn_id="m5-other-owner",
+        content="I prefer FAISS for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="FAISS",
+        source_type="explicit_user",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m5-") as temporary:
+        root = Path(temporary)
+        database_path = root / "memory.sqlite3"
+        index_directory = root / "index"
+        service = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(
+                "m5-original-memory",
+                "m5-replacement-memory",
+                "m5-deleted-memory",
+                "m5-other-owner-memory",
+            ),
+            create_index_if_missing=True,
+            relevance_threshold=0.50,
+        )
+        owner = RequestContext(user_id="demo-user", request_id="m5-original")
+        original = service.admit(owner, original_request)
+        replacement = service.admit(
+            RequestContext(user_id="demo-user", request_id="m5-replacement"),
+            replacement_request,
+        )
+        deleted = service.admit(
+            RequestContext(user_id="demo-user", request_id="m5-deleted"),
+            deleted_request,
+        )
+        other_owner = service.admit(
+            RequestContext(user_id="other-user", request_id="m5-other-owner"),
+            other_owner_request,
+        )
+        if deleted.memory_id is None:
+            raise RuntimeError("M5 demo deleted seed admission failed")
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE memories SET deleted_at = ? WHERE memory_id = ?",
+                (now.isoformat(), deleted.memory_id),
+            )
+
+        restarted = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        state_query = """
+            SELECT memory_id, lifecycle_status, supersedes_json, superseded_by,
+                   deleted_at
+            FROM memories ORDER BY memory_id
+        """
+        with sqlite3.connect(database_path) as connection:
+            before = connection.execute(state_query).fetchall()
+
+        current = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m5-current"),
+            RetrievalRequest(
+                query=replacement_request.content,
+                limit=10,
+                token_budget=256,
+            ),
+        )
+        historical = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m5-historical"),
+            RetrievalRequest(
+                query=original_request.content,
+                limit=10,
+                token_budget=256,
+                intent=RetrievalIntent.HISTORICAL,
+            ),
+        )
+        with sqlite3.connect(database_path) as connection:
+            after = connection.execute(state_query).fetchall()
+
+        if original.memory_id is None or replacement.memory_id is None:
+            raise RuntimeError("M5 demo supersession admissions failed")
+        if current.included_memory_ids != (replacement.memory_id,):
+            raise RuntimeError("M5 demo current retrieval did not select only replacement")
+        historical_by_id = {
+            item.memory.memory_id: item.memory for item in historical.memories
+        }
+        historical_original = historical_by_id.get(original.memory_id)
+        if historical_original is None:
+            raise RuntimeError("M5 demo historical retrieval lost superseded original")
+        if historical_original.lifecycle_status.value != "superseded":
+            raise RuntimeError("M5 demo historical lifecycle metadata is inaccurate")
+        excluded_ids = {deleted.memory_id, other_owner.memory_id}
+        if excluded_ids.intersection(historical.included_memory_ids):
+            raise RuntimeError("M5 demo historical isolation or deletion failed")
+        if before != after:
+            raise RuntimeError("M5 demo retrieval mutated lifecycle relationships")
+        if current.tokens_used > current.token_budget:
+            raise RuntimeError("M5 demo current context exceeded its token budget")
+        if historical.tokens_used > historical.token_budget:
+            raise RuntimeError("M5 demo historical context exceeded its token budget")
+
+        output = {
+            "restart": {
+                "durable_store_reopened": True,
+            },
+            "current_retrieval": {
+                "selected_memory_ids": list(current.included_memory_ids),
+                "token_budget": current.token_budget,
+                "tokens_used": current.tokens_used,
+            },
+            "historical_retrieval": {
+                "selected_memory_ids": list(historical.included_memory_ids),
+                "memories": [
+                    {
+                        "memory_id": item.memory.memory_id,
+                        "lifecycle_status": item.memory.lifecycle_status.value,
+                        "superseded_by": item.memory.superseded_by,
+                    }
+                    for item in historical.memories
+                ],
+                "token_budget": historical.token_budget,
+                "tokens_used": historical.tokens_used,
+            },
+            "exclusions": {
+                "deleted_memory_absent": deleted.memory_id
+                not in historical.included_memory_ids,
+                "other_owner_memory_absent": other_owner.memory_id
+                not in historical.included_memory_ids,
+            },
+            "read_only": {
+                "lifecycle_and_relationship_state_unchanged": before == after,
+                "original_remains_superseded": historical_original.superseded_by
+                == replacement.memory_id,
+            },
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -501,6 +694,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_no_memory()
     if arguments.command == "demo-supersession":
         return _demo_supersession()
+    if arguments.command == "demo-history":
+        return _demo_history()
     return 0
 
 

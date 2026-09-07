@@ -68,6 +68,8 @@ class MemoryRepositoryPort(Protocol):
         self, *, user_id: str, now: datetime
     ) -> tuple[int, ...]: ...
 
+    def historical_vector_ids(self, *, user_id: str) -> tuple[int, ...]: ...
+
     def hydrate_indexed(
         self, *, user_id: str, vector_ids: tuple[int, ...]
     ) -> tuple[HydratedMemory, ...]: ...
@@ -78,6 +80,10 @@ class MemoryRepositoryPort(Protocol):
         user_id: str,
         vector_ids: tuple[int, ...],
         now: datetime,
+    ) -> tuple[HydratedMemory, ...]: ...
+
+    def hydrate_historical(
+        self, *, user_id: str, vector_ids: tuple[int, ...]
     ) -> tuple[HydratedMemory, ...]: ...
 
 

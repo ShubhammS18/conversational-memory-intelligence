@@ -21,7 +21,10 @@ from conversational_memory.application.contracts import (
     PersistedPendingMemory,
 )
 from conversational_memory.application.errors import StorageError
-from conversational_memory.domain.eligibility import is_current_state_eligible
+from conversational_memory.domain.eligibility import (
+    is_current_state_eligible,
+    is_historical_eligible,
+)
 from conversational_memory.domain.models import (
     AdmissionDecision,
     EvidenceAuthority,
@@ -328,6 +331,34 @@ class SQLiteMemoryRepository:
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise StorageError("SQLite current-state vector lookup failed") from error
 
+    def historical_vector_ids(self, *, user_id: str) -> tuple[int, ...]:
+        """Return vector IDs satisfying every authoritative M5 history rule."""
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT v.vector_id
+                    FROM memory_vector_mappings AS v
+                    JOIN memories AS m ON m.memory_id = v.memory_id
+                    WHERE m.user_id = ?
+                      AND m.indexing_state = 'indexed'
+                      AND m.deleted_at IS NULL
+                      AND (
+                        (m.lifecycle_status = 'active' AND m.superseded_by IS NULL)
+                        OR (
+                          m.lifecycle_status = 'superseded'
+                          AND m.superseded_by IS NOT NULL
+                          AND TRIM(m.superseded_by) <> ''
+                        )
+                      )
+                    ORDER BY v.vector_id
+                    """,
+                    (user_id,),
+                ).fetchall()
+            return tuple(int(row["vector_id"]) for row in rows)
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise StorageError("SQLite historical vector lookup failed") from error
+
     def hydrate_indexed(
         self,
         *,
@@ -371,6 +402,20 @@ class SQLiteMemoryRepository:
             item
             for item in hydrated
             if is_current_state_eligible(item.memory, user_id=user_id, now=now)
+        )
+
+    def hydrate_historical(
+        self,
+        *,
+        user_id: str,
+        vector_ids: tuple[int, ...],
+    ) -> tuple[HydratedMemory, ...]:
+        """Hydrate mappings only while every M5 historical rule still holds."""
+        hydrated = self.hydrate_indexed(user_id=user_id, vector_ids=vector_ids)
+        return tuple(
+            item
+            for item in hydrated
+            if is_historical_eligible(item.memory, user_id=user_id)
         )
 
     def _transition(

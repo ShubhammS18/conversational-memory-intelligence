@@ -63,6 +63,13 @@ class AdmissionRequest:
         return value
 
 
+class RetrievalIntent(StrEnum):
+    """Caller-declared lifecycle view for retrieval."""
+
+    CURRENT = "current"
+    HISTORICAL = "historical"
+
+
 @pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
 class RetrievalRequest:
     """Untrusted retrieval payload with a memory-only context allowance."""
@@ -70,6 +77,7 @@ class RetrievalRequest:
     query: StrictText
     limit: PositiveStrictInt
     token_budget: NonNegativeStrictInt
+    intent: RetrievalIntent = RetrievalIntent.CURRENT
 
     @field_validator("query")
     @classmethod

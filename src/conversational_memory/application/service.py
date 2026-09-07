@@ -11,7 +11,10 @@ from conversational_memory.domain.context import (
     ContextExclusionReason,
     select_context,
 )
-from conversational_memory.domain.eligibility import is_current_state_eligible
+from conversational_memory.domain.eligibility import (
+    is_current_state_eligible,
+    is_historical_eligible,
+)
 from conversational_memory.domain.idempotency import (
     RequestFingerprintInput,
     normalize_idempotency_key,
@@ -40,6 +43,7 @@ from .contracts import (
     Embedding,
     ExistingAdmission,
     RequestContext,
+    RetrievalIntent,
     RetrievalOutcome,
     RetrievalRequest,
     RetrievalResult,
@@ -180,11 +184,17 @@ class MemoryService:
         query, limit, token_budget = self._validate_retrieval_request(request)
         if self._token_counter.tokenizer_id != _M1_TOKENIZER:
             raise ValidationError("invalid_tokenizer_configuration")
-        now = self._clock.now()
-        allowed_vector_ids = self._repository.current_state_vector_ids(
-            user_id=context.user_id,
-            now=now,
-        )
+        now: datetime | None = None
+        if request.intent is RetrievalIntent.CURRENT:
+            now = self._clock.now()
+            allowed_vector_ids = self._repository.current_state_vector_ids(
+                user_id=context.user_id,
+                now=now,
+            )
+        else:
+            allowed_vector_ids = self._repository.historical_vector_ids(
+                user_id=context.user_id,
+            )
         if not allowed_vector_ids:
             return RetrievalResult(
                 memories=(),
@@ -207,11 +217,20 @@ class MemoryService:
         if any(hit.vector_id not in allowed for hit in hits):
             raise AuthorizationError("unauthorized_retrieval_result")
 
-        hydrated = self._repository.hydrate_current_state(
-            user_id=context.user_id,
-            vector_ids=tuple(hit.vector_id for hit in hits),
-            now=now,
-        )
+        hit_vector_ids = tuple(hit.vector_id for hit in hits)
+        if request.intent is RetrievalIntent.CURRENT:
+            if now is None:
+                raise AuthorizationError("unauthorized_retrieval_result")
+            hydrated = self._repository.hydrate_current_state(
+                user_id=context.user_id,
+                vector_ids=hit_vector_ids,
+                now=now,
+            )
+        else:
+            hydrated = self._repository.hydrate_historical(
+                user_id=context.user_id,
+                vector_ids=hit_vector_ids,
+            )
         memories_by_vector_id = {item.vector_id: item.memory for item in hydrated}
         if len(memories_by_vector_id) != len(hits):
             raise AuthorizationError("unauthorized_retrieval_result")
@@ -221,14 +240,15 @@ class MemoryService:
         scores_by_memory_id: dict[str, float] = {}
         for hit in hits:
             memory = memories_by_vector_id.get(hit.vector_id)
-            if (
-                memory is None
-                or not is_current_state_eligible(
-                    memory,
-                    user_id=context.user_id,
-                    now=now,
+            eligible = memory is not None and (
+                is_historical_eligible(memory, user_id=context.user_id)
+                if request.intent is RetrievalIntent.HISTORICAL
+                else now is not None
+                and is_current_state_eligible(
+                    memory, user_id=context.user_id, now=now
                 )
-            ):
+            )
+            if not eligible or memory is None:
                 raise AuthorizationError("unauthorized_retrieval_result")
             scores_by_memory_id[memory.memory_id] = hit.score
             if is_relevant(

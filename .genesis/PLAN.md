@@ -167,6 +167,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M5 — Historical Retrieval
 
+- **Progress:** Complete on 2026-09-07 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** An explicitly historical query can retrieve an authorized superseded memory without changing current state.
 - **Included behavior:** Explicit historical intent in `RetrievalRequest`; authorized superseded-memory eligibility; lifecycle metadata; continued exclusion of deleted memories; no lifecycle mutation during retrieval.
 - **Exclusions:** Automatic expiration, forgetting operations, recovery, observability rollout, and fixed-workload completion.

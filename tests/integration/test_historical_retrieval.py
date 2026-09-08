@@ -39,6 +39,11 @@ class FixedClock:
         return NOW
 
 
+class ExplodingClock:
+    def now(self) -> datetime:
+        raise AssertionError("historical retrieval must not consult the clock")
+
+
 class CharacterCounter:
     tokenizer_id = "cl100k_base"
 
@@ -146,6 +151,30 @@ def test_historical_allowlist_applies_complete_owner_and_state_policy(
         repository,
         _memory("expired", lifecycle_status=LifecycleStatus.EXPIRED),
     )
+    deleted_expired_id = _persist_indexed(
+        repository,
+        _memory(
+            "deleted-expired",
+            lifecycle_status=LifecycleStatus.EXPIRED,
+            deleted_at=NOW - timedelta(seconds=1),
+        ),
+    )
+    inconsistent_expired_id = _persist_indexed(
+        repository,
+        _memory(
+            "inconsistent-expired",
+            lifecycle_status=LifecycleStatus.EXPIRED,
+            superseded_by="replacement",
+        ),
+    )
+    other_owner_expired_id = _persist_indexed(
+        repository,
+        _memory(
+            "other-owner-expired",
+            user_id="user-2",
+            lifecycle_status=LifecycleStatus.EXPIRED,
+        ),
+    )
     other_owner_id = _persist_indexed(
         repository,
         _memory("other-owner", user_id="user-2"),
@@ -155,6 +184,7 @@ def test_historical_allowlist_applies_complete_owner_and_state_policy(
         superseded_id,
         replacement_id,
         active_id,
+        expired_id,
     )
     assert {
         pending_id,
@@ -162,7 +192,9 @@ def test_historical_allowlist_applies_complete_owner_and_state_policy(
         deleted_id,
         inconsistent_active_id,
         inconsistent_superseded_id,
-        expired_id,
+        deleted_expired_id,
+        inconsistent_expired_id,
+        other_owner_expired_id,
         other_owner_id,
     }.isdisjoint(repository.historical_vector_ids(user_id="user-1"))
 
@@ -305,3 +337,97 @@ def test_service_dispatches_only_explicit_historical_intent_without_mutation(
             """
         ).fetchall()
     assert after == before
+
+
+def test_persisted_expired_memory_is_historical_only_clock_free_and_read_only(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "memory.sqlite3"
+    repository = SQLiteMemoryRepository(database_path)
+    vector_index = FaissVectorIndex(
+        tmp_path / "index",
+        embedding_model=EMBEDDING.model_id,
+        vector_dimension=EMBEDDING.dimension,
+        create_if_missing=True,
+    )
+    memories = (
+        _memory("expired", lifecycle_status=LifecycleStatus.EXPIRED),
+        _memory(
+            "deleted-expired",
+            lifecycle_status=LifecycleStatus.EXPIRED,
+            deleted_at=NOW - timedelta(seconds=1),
+        ),
+        _memory(
+            "inconsistent-expired",
+            lifecycle_status=LifecycleStatus.EXPIRED,
+            superseded_by="replacement",
+        ),
+        _memory(
+            "other-owner-expired",
+            user_id="user-2",
+            lifecycle_status=LifecycleStatus.EXPIRED,
+        ),
+    )
+    for memory in memories:
+        vector_id = _persist_indexed(repository, memory)
+        vector_index.add(vector_id=vector_id, embedding=EMBEDDING)
+
+    current_service = compose_memory_service(
+        repository=repository,
+        vector_index=vector_index,
+        embedder=MappingEmbedder(),
+        token_counter=CharacterCounter(),
+        clock=FixedClock(),
+        memory_ids=UnusedMemoryIds(),
+        relevance_threshold=0.50,
+    )
+    historical_service = compose_memory_service(
+        repository=repository,
+        vector_index=vector_index,
+        embedder=MappingEmbedder(),
+        token_counter=CharacterCounter(),
+        clock=ExplodingClock(),
+        memory_ids=UnusedMemoryIds(),
+        relevance_threshold=0.50,
+    )
+    request = RetrievalRequest(
+        query="vector database history",
+        limit=10,
+        token_budget=1000,
+    )
+
+    current = current_service.retrieve(
+        RequestContext(user_id="user-1", request_id="current-expired"),
+        request,
+    )
+    with sqlite3.connect(database_path) as connection:
+        before_history = connection.execute(
+            """
+            SELECT memory_id, lifecycle_status, supersedes_json, superseded_by,
+                   deleted_at
+            FROM memories ORDER BY memory_id
+            """
+        ).fetchall()
+
+    historical = historical_service.retrieve(
+        RequestContext(user_id="user-1", request_id="historical-expired"),
+        RetrievalRequest(
+            query=request.query,
+            limit=request.limit,
+            token_budget=request.token_budget,
+            intent=RetrievalIntent.HISTORICAL,
+        ),
+    )
+
+    assert current.included_memory_ids == ()
+    assert historical.included_memory_ids == ("expired",)
+    assert historical.memories[0].memory.lifecycle_status is LifecycleStatus.EXPIRED
+    with sqlite3.connect(database_path) as connection:
+        after_history = connection.execute(
+            """
+            SELECT memory_id, lifecycle_status, supersedes_json, superseded_by,
+                   deleted_at
+            FROM memories ORDER BY memory_id
+            """
+        ).fetchall()
+    assert after_history == before_history

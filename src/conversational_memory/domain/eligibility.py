@@ -34,6 +34,9 @@ def is_historical_eligible(memory: MemoryRecord, *, user_id: str) -> bool:
         memory.lifecycle_status is LifecycleStatus.SUPERSEDED
         and memory.superseded_by is not None
         and bool(memory.superseded_by.strip())
+    ) or (
+        memory.lifecycle_status is LifecycleStatus.EXPIRED
+        and memory.superseded_by is None
     )
     return (
         memory.user_id == user_id

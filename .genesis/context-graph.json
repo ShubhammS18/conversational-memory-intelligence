@@ -1,7 +1,7 @@
 {
   "$comment": "nodes=modules, edges=[cause,effect] where cause is imported-by effect. ADD invariants by hand.",
   "project": "conversational-memory-intelligence",
-  "generated": "2026-09-07T14:03:10Z",
+  "generated": "2026-09-08T13:35:40Z",
   "nodes": [
     "external:csv",
     "external:datetime",
@@ -220,6 +220,7 @@
     "no_forced_nearest_match": "When no M2-eligible candidate meets the approved relevance threshold, retrieval must return a successful empty no_relevant_memory result rather than force the nearest candidate into context.",
     "explicit_supersession_is_atomic": "Only an explicit user correction to an owner-scoped active indexed matching target may atomically make a pending replacement current and write both relationship directions; inferred or ambiguous input must not mutate supersession relationships.",
     "historical_retrieval_is_explicit_and_read_only": "Only explicit historical intent may admit authorized non-deleted superseded memories; historical retrieval must not reactivate or otherwise mutate lifecycle or relationship state.",
+    "trusted_clock_expiration_is_atomic": "Current retrieval uses one validated trusted UTC instant; eligible memories expire atomically at valid_until before search, while persisted expired memories remain excluded from current retrieval and may be read only through explicit authorized history.",
     "forgetting_is_global_and_nonreactivating": "After an authorized forget request is accepted, that memory must be unavailable through every retrieval path, and forgetting a newer memory must not reactivate an older superseded memory."
   },
   "freeze_boundary": [

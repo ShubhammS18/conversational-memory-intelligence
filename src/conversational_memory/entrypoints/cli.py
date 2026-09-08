@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
@@ -39,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser(
         "demo-history",
         help="Run the real M5 current-versus-historical retrieval demonstration",
+    )
+    subcommands.add_parser(
+        "demo-expiration",
+        help="Run the real M6 trusted-clock expiration demonstration",
     )
     return parser
 
@@ -682,6 +687,206 @@ def _demo_history() -> int:
     return 0
 
 
+def _demo_expiration() -> int:
+    from datetime import timedelta
+
+    from conversational_memory.application import (
+        AdmissionRequest,
+        RequestContext,
+        RetrievalIntent,
+        RetrievalRequest,
+    )
+    from conversational_memory.composition import compose_local_memory_service
+
+    boundary = datetime(2026, 9, 8, 12, tzinfo=UTC)
+    before = boundary - timedelta(microseconds=1)
+    after = boundary + timedelta(microseconds=1)
+    token_budget = 256
+    original_request = AdmissionRequest(
+        idempotency_key="m6-original",
+        conversation_id="m6-demo-conversation",
+        turn_id="m6-original",
+        content="The deployment window remains open.",
+        memory_type="fact",
+        subject="deployment window",
+        value="open",
+        source_type="explicit_user",
+    )
+    replacement_request = AdmissionRequest(
+        idempotency_key="m6-expiring",
+        conversation_id="m6-demo-conversation",
+        turn_id="m6-expiring",
+        content="The deployment window closes at noon UTC.",
+        memory_type="fact",
+        subject="deployment window",
+        value="closed at noon UTC",
+        source_type="explicit_user",
+        valid_from=before,
+        valid_until=boundary,
+        supersedes_memory_id="m6-original-memory",
+    )
+
+    class _UnreadClock:
+        def __init__(self) -> None:
+            self.read = False
+
+        def now(self) -> datetime:
+            self.read = True
+            raise RuntimeError("historical retrieval read the trusted clock")
+
+    def index_hashes(directory: Path) -> dict[str, str]:
+        return {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(directory.iterdir())
+            if path.is_file()
+        }
+
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m6-") as temporary:
+        root = Path(temporary)
+        database_path = root / "memory.sqlite3"
+        index_directory = root / "index"
+        service_before = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(before),
+            memory_ids=_SequenceMemoryIds(
+                "m6-original-memory",
+                "m6-expiring-memory",
+            ),
+            create_index_if_missing=True,
+            relevance_threshold=0.50,
+        )
+        original = service_before.admit(
+            RequestContext(user_id="demo-user", request_id="m6-original"),
+            original_request,
+        )
+        replacement = service_before.admit(
+            RequestContext(user_id="demo-user", request_id="m6-expiring"),
+            replacement_request,
+        )
+        query = replacement_request.content
+        before_result = service_before.retrieve(
+            RequestContext(user_id="demo-user", request_id="m6-before"),
+            RetrievalRequest(query=query, limit=10, token_budget=token_budget),
+        )
+        faiss_before = index_hashes(index_directory)
+
+        service_at = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(boundary),
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        at_result = service_at.retrieve(
+            RequestContext(user_id="demo-user", request_id="m6-at"),
+            RetrievalRequest(query=query, limit=10, token_budget=token_budget),
+        )
+
+        service_after_restart = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(after),
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        after_result = service_after_restart.retrieve(
+            RequestContext(user_id="demo-user", request_id="m6-after"),
+            RetrievalRequest(query=query, limit=10, token_budget=token_budget),
+        )
+        faiss_after = index_hashes(index_directory)
+
+        state_query = """
+            SELECT memory_id, lifecycle_status, supersedes_json, superseded_by,
+                   deleted_at
+            FROM memories ORDER BY memory_id
+        """
+        with sqlite3.connect(database_path) as connection:
+            before_history = connection.execute(state_query).fetchall()
+        states = {str(row[0]): row for row in before_history}
+        original_state = states["m6-original-memory"]
+        replacement_state = states["m6-expiring-memory"]
+
+        unread_clock = _UnreadClock()
+        historical_service = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=unread_clock,
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        historical = historical_service.retrieve(
+            RequestContext(user_id="demo-user", request_id="m6-history"),
+            RetrievalRequest(
+                query=query,
+                limit=10,
+                token_budget=token_budget,
+                intent=RetrievalIntent.HISTORICAL,
+            ),
+        )
+        with sqlite3.connect(database_path) as connection:
+            after_history = connection.execute(state_query).fetchall()
+
+        if original.memory_id is None or replacement.memory_id is None:
+            raise RuntimeError("M6 demo admissions failed")
+        if before_result.included_memory_ids != (replacement.memory_id,):
+            raise RuntimeError("M6 demo memory was not current before its end")
+        if at_result.included_memory_ids or after_result.included_memory_ids:
+            raise RuntimeError("M6 demo expired memory remained current")
+        if replacement_state[1] != "expired":
+            raise RuntimeError("M6 demo did not persist expiration")
+        relationships_unchanged = (
+            json.loads(str(replacement_state[2])) == [original.memory_id]
+            and original_state[3] == replacement.memory_id
+        )
+        if not relationships_unchanged or faiss_before != faiss_after:
+            raise RuntimeError("M6 demo expiration changed relationships or FAISS")
+        if replacement.memory_id not in historical.included_memory_ids:
+            raise RuntimeError("M6 demo history did not return the expired memory")
+        if unread_clock.read or before_history != after_history:
+            raise RuntimeError("M6 demo historical retrieval was not read-only")
+        if before_result.tokens_used > before_result.token_budget:
+            raise RuntimeError("M6 demo current context exceeded its token budget")
+        if historical.tokens_used > historical.token_budget:
+            raise RuntimeError("M6 demo historical context exceeded its token budget")
+
+        output = {
+            "trusted_times": {
+                "before": before.isoformat(),
+                "boundary": boundary.isoformat(),
+                "after": after.isoformat(),
+            },
+            "boundary": {
+                "before_current": list(before_result.included_memory_ids),
+                "at_current": list(at_result.included_memory_ids),
+                "after_restart_current": list(after_result.included_memory_ids),
+                "persisted_lifecycle_status": replacement_state[1],
+            },
+            "preservation": {
+                "faiss_generation_unchanged": faiss_before == faiss_after,
+                "replacement_supersedes": json.loads(str(replacement_state[2])),
+                "original_superseded_by": original_state[3],
+                "relationships_unchanged": relationships_unchanged,
+            },
+            "historical": {
+                "selected_memory_ids": list(historical.included_memory_ids),
+                "expired_memory_returned": replacement.memory_id
+                in historical.included_memory_ids,
+                "clock_read": unread_clock.read,
+                "state_unchanged": before_history == after_history,
+                "remained_expired": replacement_state[1] == "expired",
+                "token_budget": historical.token_budget,
+                "tokens_used": historical.tokens_used,
+            },
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -696,6 +901,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_supersession()
     if arguments.command == "demo-history":
         return _demo_history()
+    if arguments.command == "demo-expiration":
+        return _demo_expiration()
     return 0
 
 

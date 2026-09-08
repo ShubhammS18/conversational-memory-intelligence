@@ -113,6 +113,32 @@ def test_retrieval_intent_rejects_non_enum_inputs(value: object) -> None:
             "expired lifecycle",
             replace(_active_memory(), lifecycle_status=LifecycleStatus.EXPIRED),
             "user-1",
+            True,
+        ),
+        (
+            "expired with superseded-by",
+            replace(
+                _active_memory(),
+                lifecycle_status=LifecycleStatus.EXPIRED,
+                superseded_by="memory-2",
+            ),
+            "user-1",
+            False,
+        ),
+        (
+            "deleted expired",
+            replace(
+                _active_memory(),
+                lifecycle_status=LifecycleStatus.EXPIRED,
+                deleted_at=NOW,
+            ),
+            "user-1",
+            False,
+        ),
+        (
+            "other-owner expired",
+            replace(_active_memory(), lifecycle_status=LifecycleStatus.EXPIRED),
+            "user-2",
             False,
         ),
         (

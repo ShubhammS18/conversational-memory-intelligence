@@ -87,3 +87,5 @@ Any cross-user disclosure, sensitive-memory retention, retrieval of deleted or i
 - [`M4-freeze-boundary-exceptions`](M4-freeze-boundary-exceptions.md) — exactly five M4-only Genesis paths for current-loop evidence and scoped decision, checkpoint, exception, and manifest records.
 - [`M5-historical-retrieval-bindings`](M5-historical-retrieval-bindings.md) — explicit typed historical intent, owner-scoped indexed and non-deleted lifecycle eligibility, unchanged relevance/context semantics, and read-only no-reactivation rules.
 - [`M5-freeze-boundary-exceptions`](M5-freeze-boundary-exceptions.md) — the SQLite historical-read adapter path plus exactly five M5-only Genesis governance paths.
+- [`M6-trusted-clock-expiration-bindings`](M6-trusted-clock-expiration-bindings.md) — one validated UTC clock reading per current retrieval, lazy owner-scoped expiration, fail-closed transition handling, and read-only historical access to consistent expired records.
+- [`M6-freeze-boundary-exceptions`](M6-freeze-boundary-exceptions.md) — the SQLite expiration path, two exact completed-M5 test-maintenance paths, one M5 compatibility amendment, and five M6 governance paths.

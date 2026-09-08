@@ -25,6 +25,7 @@ from conversational_memory.domain.eligibility import (
     is_current_state_eligible,
     is_historical_eligible,
 )
+from conversational_memory.domain.expiration import validate_trusted_utc
 from conversational_memory.domain.models import (
     AdmissionDecision,
     EvidenceAuthority,
@@ -350,6 +351,10 @@ class SQLiteMemoryRepository:
                           AND m.superseded_by IS NOT NULL
                           AND TRIM(m.superseded_by) <> ''
                         )
+                        OR (
+                          m.lifecycle_status = 'expired'
+                          AND m.superseded_by IS NULL
+                        )
                       )
                     ORDER BY v.vector_id
                     """,
@@ -358,6 +363,39 @@ class SQLiteMemoryRepository:
             return tuple(int(row["vector_id"]) for row in rows)
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise StorageError("SQLite historical vector lookup failed") from error
+
+    def expire_current_memories(self, *, user_id: str, now: datetime) -> int:
+        """Atomically expire eligible current memories within one owner scope."""
+        current_time = _utc_text(validate_trusted_utc(now))
+        with _WRITE_LOCK:
+            try:
+                with self._connection() as connection:
+                    try:
+                        connection.execute("BEGIN IMMEDIATE")
+                        cursor = connection.execute(
+                            """
+                            UPDATE memories
+                            SET lifecycle_status = 'expired'
+                            WHERE user_id = ?
+                              AND lifecycle_status = 'active'
+                              AND indexing_state = 'indexed'
+                              AND deleted_at IS NULL
+                              AND superseded_by IS NULL
+                              AND valid_until IS NOT NULL
+                              AND valid_until <= ?
+                            """,
+                            (user_id, current_time),
+                        )
+                        transitioned = cursor.rowcount
+                        connection.commit()
+                    except sqlite3.Error as error:
+                        connection.rollback()
+                        raise StorageError("SQLite expiration transition failed") from error
+            except StorageError:
+                raise
+            except sqlite3.Error as error:
+                raise StorageError("SQLite expiration transition failed") from error
+        return transitioned
 
     def hydrate_indexed(
         self,

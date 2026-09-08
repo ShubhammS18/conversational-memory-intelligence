@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Lock
 
 from conversational_memory.domain.admission import evaluate_credential_admission
@@ -15,6 +15,7 @@ from conversational_memory.domain.eligibility import (
     is_current_state_eligible,
     is_historical_eligible,
 )
+from conversational_memory.domain.expiration import validate_trusted_utc
 from conversational_memory.domain.idempotency import (
     RequestFingerprintInput,
     normalize_idempotency_key,
@@ -186,7 +187,14 @@ class MemoryService:
             raise ValidationError("invalid_tokenizer_configuration")
         now: datetime | None = None
         if request.intent is RetrievalIntent.CURRENT:
-            now = self._clock.now()
+            try:
+                now = validate_trusted_utc(self._clock.now())
+            except ValueError as error:
+                raise ConfigurationError("invalid_trusted_clock") from error
+            self._repository.expire_current_memories(
+                user_id=context.user_id,
+                now=now,
+            )
             allowed_vector_ids = self._repository.current_state_vector_ids(
                 user_id=context.user_id,
                 now=now,
@@ -496,6 +504,18 @@ class MemoryService:
             supersedes_memory_id=request.supersedes_memory_id,
         )
         try:
+            for endpoint in (request.valid_from, request.valid_until):
+                if endpoint is not None and (
+                    endpoint.tzinfo is None or endpoint.utcoffset() is None
+                ):
+                    raise ValueError("validity endpoints must be timezone-aware")
+            if (
+                request.valid_from is not None
+                and request.valid_until is not None
+                and request.valid_from.astimezone(UTC)
+                > request.valid_until.astimezone(UTC)
+            ):
+                raise ValueError("valid_from must not be after valid_until")
             idempotency_key = normalize_idempotency_key(request.idempotency_key)
             fingerprint = request_fingerprint(fingerprint_input)
         except (TypeError, ValueError) as error:

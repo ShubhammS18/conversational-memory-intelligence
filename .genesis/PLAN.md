@@ -190,6 +190,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M6 — Trusted-Clock Expiration
 
+- **Progress:** Complete on 2026-09-08 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** A memory stops appearing in current-state retrieval when its explicit `valid_until` is reached according to the trusted UTC clock.
 - **Included behavior:** Timezone-aware trusted clock; validation of explicitly supplied validity dates; expiration decisions based only on trusted current time; caller timestamps retained solely as source-event or provenance information.
 - **Exclusions:** Forgetting, recovery, observability rollout, inferred dates, and fixed-workload completion.
@@ -310,4 +311,4 @@ Total planned milestone token budget: 500000.
 
 ## Progress (loops append here on milestone completion — newest last)
 
-- _(none yet — first loop fills this)_
+- M6 completed on 2026-09-08 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M7 remains unstarted pending separate G0 authorization.

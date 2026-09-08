@@ -73,6 +73,17 @@ The existing outcome distinctions remain:
 Historical retrieval is read-only. It must not reactivate a superseded memory,
 alter lifecycle state, write or remove a relationship, or modify SQLite or FAISS.
 
+## M6 compatibility amendment · 2026-09-08
+
+The M5 statement that lifecycle states other than `active` and `superseded`
+are historically ineligible records the system as closed at M5.
+
+Once the accepted M6 binding is implemented, historical eligibility also
+admits consistent persisted `expired` records under M6's owner, indexed,
+non-deleted, relationship-consistency, and read-only rules. M6 governs that
+extension; all other M5 intent, isolation, relevance, ranking, outcome, and
+budgeting rules remain unchanged.
+
 ## Milestone boundaries
 
 M5 does not add automatic intent classification, expiration transitions,

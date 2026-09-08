@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 
@@ -107,7 +107,7 @@ class MemoryRecord:
         if (
             self.valid_from is not None
             and self.valid_until is not None
-            and self.valid_from > self.valid_until
+            and self.valid_from.astimezone(UTC) > self.valid_until.astimezone(UTC)
         ):
             raise ValueError("valid_from must not be after valid_until")
 

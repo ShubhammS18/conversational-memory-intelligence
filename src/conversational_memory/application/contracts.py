@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from conversational_memory.domain.context import ContextExclusion
+from conversational_memory.domain.forgetting import ForgetOutcome, ForgettingCleanupState
 from conversational_memory.domain.models import AdmissionDecision, IndexingState, MemoryRecord
 
 _BOUNDARY_CONFIG = ConfigDict(strict=True, extra="forbid", arbitrary_types_allowed=True)
@@ -85,6 +86,146 @@ class RetrievalRequest:
         if not value.strip():
             raise ValueError("query must not be empty")
         return value
+
+
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
+class ForgetRequest:
+    """Untrusted request naming one opaque memory ID; owner identity is absent."""
+
+    memory_id: StrictText
+
+    @field_validator("memory_id")
+    @classmethod
+    def _require_exact_memory_id(cls, value: str) -> str:
+        if not value or value != value.strip():
+            raise ValueError("memory_id must not contain surrounding whitespace")
+        return value
+
+
+@pydantic_dataclass(frozen=True, slots=True, config=_BOUNDARY_CONFIG)
+class ForgetResult:
+    """Strict structured result for owner-scoped forgetting."""
+
+    outcome: ForgetOutcome
+    reason: StrictText
+    memory_id: StrictText | None
+    deleted_at: datetime | None
+    retrievable: StrictBoolean
+    cleanup_complete: StrictBoolean
+    retryable: StrictBoolean
+
+    @model_validator(mode="after")
+    def _validate_outcome_shape(self) -> Self:
+        if not self.reason.strip():
+            raise ValueError("reason must not be empty")
+        if self.memory_id is not None and (
+            not self.memory_id or self.memory_id != self.memory_id.strip()
+        ):
+            raise ValueError("memory_id must not contain surrounding whitespace")
+        if self.deleted_at is not None and (
+            self.deleted_at.tzinfo is None
+            or self.deleted_at.utcoffset() != timedelta(0)
+        ):
+            raise ValueError("deleted_at must be timezone-aware UTC")
+
+        if self.outcome is ForgetOutcome.NOT_FOUND:
+            valid = (
+                self.reason == "memory_not_found"
+                and self.memory_id is None
+                and self.deleted_at is None
+                and not self.retrievable
+                and not self.cleanup_complete
+                and not self.retryable
+            )
+        elif self.outcome is ForgetOutcome.FORGOTTEN:
+            valid = (
+                self.reason in {"forgotten", "already_forgotten"}
+                and self.memory_id is not None
+                and self.deleted_at is not None
+                and not self.retrievable
+                and self.cleanup_complete
+                and not self.retryable
+            )
+        else:
+            valid = (
+                self.reason
+                in {"physical_cleanup_pending", "physical_cleanup_identity_pending"}
+                and self.memory_id is not None
+                and self.deleted_at is not None
+                and not self.retrievable
+                and not self.cleanup_complete
+                and self.retryable
+            )
+        if not valid:
+            raise ValueError("forget result fields are inconsistent with outcome")
+        return self
+
+
+@dataclass(frozen=True, slots=True)
+class ForgettingRecord:
+    """Authoritative durable state for one forgetting operation."""
+
+    memory_id: str
+    user_id: str
+    vector_id: int | None
+    cleanup_state: ForgettingCleanupState
+    requested_at: datetime
+    completed_at: datetime | None
+
+    def __post_init__(self) -> None:
+        if not self.memory_id or self.memory_id != self.memory_id.strip():
+            raise ValueError("memory_id must be an exact non-empty string")
+        if not self.user_id.strip():
+            raise ValueError("user_id must not be empty")
+        _validate_optional_vector_id(self.vector_id)
+        _require_utc_datetime("requested_at", self.requested_at)
+        if self.completed_at is not None:
+            _require_utc_datetime("completed_at", self.completed_at)
+        if self.cleanup_state is ForgettingCleanupState.CLEANUP_PENDING:
+            if self.completed_at is not None:
+                raise ValueError("pending cleanup must not have completed_at")
+        elif self.vector_id is None or self.completed_at is None:
+            raise ValueError("complete cleanup requires vector_id and completed_at")
+
+
+@dataclass(frozen=True, slots=True)
+class ForgettingTarget:
+    """One owner-scoped memory with its mapping and forgetting state."""
+
+    memory: MemoryRecord
+    vector_id: int | None
+    forgetting: ForgettingRecord | None
+
+    def __post_init__(self) -> None:
+        _validate_optional_vector_id(self.vector_id)
+        if self.forgetting is None:
+            return
+        if (
+            self.forgetting.memory_id != self.memory.memory_id
+            or self.forgetting.user_id != self.memory.user_id
+        ):
+            raise ValueError("forgetting state must match its memory")
+        if (
+            self.vector_id is not None
+            and self.forgetting.vector_id is not None
+            and self.vector_id != self.forgetting.vector_id
+        ):
+            raise ValueError("stored forgetting and mapping vector IDs must match")
+
+
+def _validate_optional_vector_id(vector_id: int | None) -> None:
+    if vector_id is not None and (
+        isinstance(vector_id, bool)
+        or not isinstance(vector_id, int)
+        or vector_id <= 0
+        or vector_id > 2**63 - 1
+    ):
+        raise ValueError("vector_id must be a positive signed-int64 integer")
+
+
+def _require_utc_datetime(field_name: str, value: datetime) -> None:
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise ValueError(f"{field_name} must be timezone-aware UTC")
 
 
 @dataclass(frozen=True, slots=True)

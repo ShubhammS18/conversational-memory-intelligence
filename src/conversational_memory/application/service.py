@@ -16,6 +16,7 @@ from conversational_memory.domain.eligibility import (
     is_historical_eligible,
 )
 from conversational_memory.domain.expiration import validate_trusted_utc
+from conversational_memory.domain.forgetting import ForgetOutcome, ForgettingCleanupState
 from conversational_memory.domain.idempotency import (
     RequestFingerprintInput,
     normalize_idempotency_key,
@@ -43,6 +44,9 @@ from .contracts import (
     AdmissionResult,
     Embedding,
     ExistingAdmission,
+    ForgetRequest,
+    ForgetResult,
+    ForgettingRecord,
     RequestContext,
     RetrievalIntent,
     RetrievalOutcome,
@@ -317,6 +321,96 @@ class MemoryService:
             included_memory_ids=tuple(memory.memory_id for memory in selection.selected_memories),
             exclusions=tuple(relevance_exclusions) + selection.exclusions,
             outcome=outcome,
+        )
+
+    def forget(
+        self,
+        context: RequestContext,
+        request: ForgetRequest,
+    ) -> ForgetResult:
+        """Logically forget one owned memory before attempting physical cleanup."""
+        self._validate_context(context)
+        with _PROCESS_WRITE_LOCK:
+            target = self._repository.find_forgetting_target(
+                user_id=context.user_id,
+                memory_id=request.memory_id,
+            )
+            if target is None:
+                return ForgetResult(
+                    outcome=ForgetOutcome.NOT_FOUND,
+                    reason="memory_not_found",
+                    memory_id=None,
+                    deleted_at=None,
+                    retrievable=False,
+                    cleanup_complete=False,
+                    retryable=False,
+                )
+
+            state = target.forgetting
+            if state is not None and state.cleanup_state is ForgettingCleanupState.COMPLETE:
+                return self._forget_result(state, reason="already_forgotten")
+            if state is None:
+                try:
+                    requested_at = validate_trusted_utc(self._clock.now())
+                except ValueError as error:
+                    raise ConfigurationError("invalid_trusted_clock") from error
+                state = self._repository.begin_forgetting(
+                    user_id=context.user_id,
+                    memory_id=request.memory_id,
+                    requested_at=requested_at,
+                )
+                if state is None:
+                    return ForgetResult(
+                        outcome=ForgetOutcome.NOT_FOUND,
+                        reason="memory_not_found",
+                        memory_id=None,
+                        deleted_at=None,
+                        retrievable=False,
+                        cleanup_complete=False,
+                        retryable=False,
+                    )
+
+            if state.vector_id is None:
+                return self._forget_result(
+                    state,
+                    reason="physical_cleanup_identity_pending",
+                )
+
+            try:
+                self._vector_index.remove(vector_id=state.vector_id)
+            except IndexingError:
+                return self._forget_result(state, reason="physical_cleanup_pending")
+
+            try:
+                completed_at = validate_trusted_utc(self._clock.now())
+            except ValueError as error:
+                raise ConfigurationError("invalid_trusted_clock") from error
+            try:
+                completed = self._repository.acknowledge_forgetting_complete(
+                    user_id=context.user_id,
+                    memory_id=request.memory_id,
+                    vector_id=state.vector_id,
+                    completed_at=completed_at,
+                )
+            except StorageError:
+                return self._forget_result(state, reason="physical_cleanup_pending")
+            return self._forget_result(completed, reason="forgotten")
+
+    @staticmethod
+    def _forget_result(state: ForgettingRecord, *, reason: str) -> ForgetResult:
+        complete = state.cleanup_state is ForgettingCleanupState.COMPLETE
+        return ForgetResult(
+            outcome=(
+                ForgetOutcome.FORGOTTEN
+                if complete
+                else ForgetOutcome.CLEANUP_PENDING
+            ),
+            reason=reason,
+            memory_id=state.memory_id,
+            deleted_at=state.requested_at,
+            retrievable=False,
+            cleanup_complete=complete,
+            retryable=not complete,
         )
 
     def _retry_indexing(

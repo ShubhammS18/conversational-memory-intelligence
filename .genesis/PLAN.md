@@ -213,6 +213,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M7 — Global, Idempotent Forgetting
 
+- **Progress:** Complete on 2026-09-09 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** An authorized forget request makes its memory unavailable through every retrieval path, remains safe when repeated or partially cleaned up, and never reactivates an older superseded memory.
 - **Included behavior:** Separate typed forgetting operation; mandatory trusted user scope; immediate logical exclusion; serialized write lock; SQLite and FAISS cleanup; pending physical deletion state; idempotent retry; no-reactivation invariant; unauthorized request rejection.
 - **Exclusions:** General recovery/rebuild beyond deletion completion, observability rollout, production authentication, and fixed-workload completion.
@@ -311,4 +312,5 @@ Total planned milestone token budget: 500000.
 
 ## Progress (loops append here on milestone completion — newest last)
 
-- M6 completed on 2026-09-08 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M7 remains unstarted pending separate G0 authorization.
+- M6 completed on 2026-09-08 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification.
+- M7 completed on 2026-09-09 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M8 remains unstarted pending separate G0 authorization.

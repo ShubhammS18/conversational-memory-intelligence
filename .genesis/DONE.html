@@ -271,7 +271,7 @@
     <div class="gate"><span class="box"></span><span class="label">
       Authorized forgetting becomes immediately non-retrievable, remains idempotent through partial cleanup failure,
       and does not reactivate older superseded state.
-      <span class="pill">later forgetting milestone</span>
+      <span class="pill live">complete</span>
       <span class="note">Proof: <code>python -m pytest tests/integration/test_forgetting.py -q</code>.</span>
     </span></div>
 
@@ -304,7 +304,7 @@
         <tr><td>M4</td><td>Supersession and Conflict Handling</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-supersession</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
         <tr><td>M5</td><td>Historical Retrieval</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-history</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
         <tr><td>M6</td><td>Trusted-Clock Expiration</td><td>1, 3, 6, 9</td><td><code>python -m conversational_memory.entrypoints.cli demo-expiration</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
-        <tr><td>M7</td><td>Global, Idempotent Forgetting</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-forgetting</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
+        <tr><td>M7</td><td>Global, Idempotent Forgetting</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-forgetting</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
         <tr><td>M8</td><td>Recovery and Reconciliation</td><td>1, 3, 6, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-recovery</code></td><td>L1, L3, L4</td><td><span class="pill">todo</span></td></tr>
         <tr><td>M9</td><td>Privacy-Safe Observability</td><td>1, 3, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-observability</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>
         <tr><td>M10</td><td>Complete Fixed-Workload Evaluation</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli evaluate-fixed-workload</code></td><td>L1, L4</td><td><span class="pill">todo</span></td></tr>

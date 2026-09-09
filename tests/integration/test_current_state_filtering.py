@@ -239,7 +239,7 @@ def test_seeded_ineligible_states_never_enter_current_state_results(
             for row in connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ] == [1, 2]
+        ] == [1, 2, 3]
         assert connection.execute(
             "SELECT deleted_at FROM memories WHERE memory_id = 'deleted'"
         ).fetchone()[0] is not None

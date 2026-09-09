@@ -109,12 +109,36 @@ class FaissVectorIndex:
                 expected_vector_id=vector_id,
             )
 
-    def _load_current_generation(self) -> Any:
+    def remove(self, *, vector_id: int) -> None:
+        """Durably remove one stable ID without rewriting an already-absent index."""
+        _validate_vector_id(vector_id)
+        with self._lock:
+            try:
+                current = self._load_current_generation(require_durable=True)
+                if vector_id not in set(_index_vector_ids(current)):
+                    self._index = current
+                    return
+                candidate = faiss.clone_index(current)
+                removed = candidate.remove_ids(
+                    faiss.IDSelectorBatch(np.asarray([vector_id], dtype=np.int64))
+                )
+                if removed != 1 or vector_id in set(_index_vector_ids(candidate)):
+                    raise IndexingError("FAISS targeted removal could not be verified")
+            except RuntimeError as error:
+                raise IndexingError("FAISS targeted removal failed") from error
+            persisted = self._persist_generation(candidate, expected_vector_id=None)
+            if vector_id in set(_index_vector_ids(persisted)):
+                raise IndexingError("FAISS durable targeted removal could not be verified")
+            self._index = persisted
+
+    def _load_current_generation(self, *, require_durable: bool = False) -> Any:
         index_exists = self._final_index.is_file()
         metadata_exists = self._final_metadata.is_file()
         if index_exists != metadata_exists:
             raise IndexingError("FAISS current generation is incomplete")
         if not index_exists:
+            if require_durable:
+                raise IndexingError("FAISS current generation is missing")
             return self._index
         try:
             return self._load_startup_generation()

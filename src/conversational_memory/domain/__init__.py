@@ -3,6 +3,7 @@
 from .admission import evaluate_credential_admission
 from .context import ContextSelection, select_context, serialize_memory_block
 from .eligibility import is_current_state_eligible
+from .forgetting import ForgetOutcome, ForgettingCleanupState
 from .idempotency import RequestFingerprintInput, normalize_idempotency_key, request_fingerprint
 from .models import (
     AdmissionDecision,
@@ -23,6 +24,8 @@ __all__ = [
     "AdmissionResult",
     "ContextSelection",
     "EvidenceAuthority",
+    "ForgetOutcome",
+    "ForgettingCleanupState",
     "IndexingState",
     "LifecycleStatus",
     "MemoryRecord",

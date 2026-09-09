@@ -16,6 +16,8 @@ from conversational_memory.application.contracts import (
     AdmissionResult,
     Embedding,
     ExistingAdmission,
+    ForgettingRecord,
+    ForgettingTarget,
     HydratedMemory,
     IndexingWork,
     PersistedPendingMemory,
@@ -26,6 +28,7 @@ from conversational_memory.domain.eligibility import (
     is_historical_eligible,
 )
 from conversational_memory.domain.expiration import validate_trusted_utc
+from conversational_memory.domain.forgetting import ForgettingCleanupState
 from conversational_memory.domain.models import (
     AdmissionDecision,
     EvidenceAuthority,
@@ -60,7 +63,7 @@ class SQLiteMemoryRepository:
                     FROM admission_idempotency AS i
                     JOIN memories AS m ON m.memory_id = i.memory_id AND m.user_id = i.user_id
                     JOIN memory_embeddings AS e ON e.memory_id = m.memory_id
-                    JOIN memory_vector_mappings AS v ON v.memory_id = m.memory_id
+                    LEFT JOIN memory_vector_mappings AS v ON v.memory_id = m.memory_id
                     WHERE i.user_id = ? AND i.idempotency_key = ?
                     """,
                     (user_id, idempotency_key),
@@ -68,10 +71,14 @@ class SQLiteMemoryRepository:
             if row is None:
                 return None
             memory = _row_to_memory(row)
-            indexing_work = IndexingWork(
-                memory_id=memory.memory_id,
-                vector_id=int(row["vector_id"]),
-                embedding=_row_to_embedding(row),
+            indexing_work = (
+                None
+                if row["vector_id"] is None
+                else IndexingWork(
+                    memory_id=memory.memory_id,
+                    vector_id=int(row["vector_id"]),
+                    embedding=_row_to_embedding(row),
+                )
             )
         except (sqlite3.Error, ValueError, TypeError, struct.error) as error:
             raise StorageError("SQLite idempotency lookup failed") from error
@@ -153,6 +160,204 @@ class SQLiteMemoryRepository:
                 raise StorageError("SQLite pending-memory transaction failed") from error
 
         return PersistedPendingMemory(memory=memory, vector_id=vector_id)
+
+    def find_forgetting_target(
+        self,
+        *,
+        user_id: str,
+        memory_id: str,
+    ) -> ForgettingTarget | None:
+        """Read a target and cleanup state only within the trusted owner."""
+        try:
+            with self._connection() as connection:
+                memory_row = connection.execute(
+                    "SELECT * FROM memories WHERE user_id = ? AND memory_id = ?",
+                    (user_id, memory_id),
+                ).fetchone()
+                if memory_row is None:
+                    return None
+                mapping_row = connection.execute(
+                    "SELECT vector_id FROM memory_vector_mappings WHERE memory_id = ?",
+                    (memory_id,),
+                ).fetchone()
+                forgetting_row = connection.execute(
+                    "SELECT * FROM memory_forgetting WHERE user_id = ? AND memory_id = ?",
+                    (user_id, memory_id),
+                ).fetchone()
+            return ForgettingTarget(
+                memory=_row_to_memory(memory_row),
+                vector_id=None if mapping_row is None else int(mapping_row["vector_id"]),
+                forgetting=(
+                    None
+                    if forgetting_row is None
+                    else _row_to_forgetting(forgetting_row)
+                ),
+            )
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise StorageError("SQLite forgetting target lookup failed") from error
+
+    def begin_forgetting(
+        self,
+        *,
+        user_id: str,
+        memory_id: str,
+        requested_at: datetime,
+    ) -> ForgettingRecord | None:
+        """Atomically tombstone an owned memory and persist pending cleanup."""
+        requested_time = validate_trusted_utc(requested_at)
+        with _WRITE_LOCK:
+            try:
+                with self._connection() as connection:
+                    try:
+                        connection.execute("BEGIN IMMEDIATE")
+                        memory_row = connection.execute(
+                            "SELECT * FROM memories WHERE user_id = ? AND memory_id = ?",
+                            (user_id, memory_id),
+                        ).fetchone()
+                        if memory_row is None:
+                            connection.rollback()
+                            return None
+                        existing_row = connection.execute(
+                            "SELECT * FROM memory_forgetting WHERE user_id = ? AND memory_id = ?",
+                            (user_id, memory_id),
+                        ).fetchone()
+                        if existing_row is not None:
+                            connection.commit()
+                            return _row_to_forgetting(existing_row)
+
+                        mapping_row = connection.execute(
+                            "SELECT vector_id FROM memory_vector_mappings WHERE memory_id = ?",
+                            (memory_id,),
+                        ).fetchone()
+                        deleted_at = _optional_datetime(memory_row["deleted_at"])
+                        effective_requested_at = (
+                            requested_time if deleted_at is None else deleted_at
+                        )
+                        if deleted_at is None:
+                            cursor = connection.execute(
+                                """
+                                UPDATE memories SET deleted_at = ?
+                                WHERE user_id = ? AND memory_id = ? AND deleted_at IS NULL
+                                """,
+                                (_utc_text(effective_requested_at), user_id, memory_id),
+                            )
+                            if cursor.rowcount != 1:
+                                raise StorageError("SQLite forgetting initiation rejected")
+
+                        vector_id = (
+                            None if mapping_row is None else int(mapping_row["vector_id"])
+                        )
+                        connection.execute(
+                            """
+                            INSERT INTO memory_forgetting(
+                                memory_id, user_id, vector_id, cleanup_state,
+                                requested_at, completed_at
+                            ) VALUES (?, ?, ?, 'cleanup_pending', ?, NULL)
+                            """,
+                            (
+                                memory_id,
+                                user_id,
+                                vector_id,
+                                _utc_text(effective_requested_at),
+                            ),
+                        )
+                        connection.commit()
+                    except StorageError:
+                        connection.rollback()
+                        raise
+                    except (sqlite3.Error, TypeError, ValueError) as error:
+                        connection.rollback()
+                        raise StorageError("SQLite forgetting initiation failed") from error
+            except StorageError:
+                raise
+            except sqlite3.Error as error:
+                raise StorageError("SQLite forgetting initiation failed") from error
+        return ForgettingRecord(
+            memory_id=memory_id,
+            user_id=user_id,
+            vector_id=vector_id,
+            cleanup_state=ForgettingCleanupState.CLEANUP_PENDING,
+            requested_at=effective_requested_at,
+            completed_at=None,
+        )
+
+    def acknowledge_forgetting_complete(
+        self,
+        *,
+        user_id: str,
+        memory_id: str,
+        vector_id: int,
+        completed_at: datetime,
+    ) -> ForgettingRecord:
+        """Atomically complete known-ID cleanup and remove its live mapping."""
+        completed_time = validate_trusted_utc(completed_at)
+        if isinstance(vector_id, bool) or not 0 < vector_id <= 2**63 - 1:
+            raise StorageError("SQLite forgetting completion rejected")
+        with _WRITE_LOCK:
+            try:
+                with self._connection() as connection:
+                    try:
+                        connection.execute("BEGIN IMMEDIATE")
+                        row = connection.execute(
+                            "SELECT * FROM memory_forgetting WHERE user_id = ? AND memory_id = ?",
+                            (user_id, memory_id),
+                        ).fetchone()
+                        memory_row = connection.execute(
+                            "SELECT deleted_at FROM memories WHERE user_id = ? AND memory_id = ?",
+                            (user_id, memory_id),
+                        ).fetchone()
+                        if row is None or memory_row is None or memory_row["deleted_at"] is None:
+                            raise StorageError("SQLite forgetting completion rejected")
+                        stored = _row_to_forgetting(row)
+                        if stored.cleanup_state is ForgettingCleanupState.COMPLETE:
+                            if stored.vector_id != vector_id:
+                                raise StorageError("SQLite forgetting completion rejected")
+                            connection.commit()
+                            return stored
+                        if stored.vector_id != vector_id or stored.completed_at is not None:
+                            raise StorageError("SQLite forgetting completion rejected")
+
+                        mapping_row = connection.execute(
+                            "SELECT vector_id FROM memory_vector_mappings WHERE memory_id = ?",
+                            (memory_id,),
+                        ).fetchone()
+                        if mapping_row is not None and int(mapping_row["vector_id"]) != vector_id:
+                            raise StorageError("SQLite forgetting completion rejected")
+                        cursor = connection.execute(
+                            """
+                            UPDATE memory_forgetting
+                            SET cleanup_state = 'complete', completed_at = ?
+                            WHERE user_id = ? AND memory_id = ?
+                              AND vector_id = ? AND cleanup_state = 'cleanup_pending'
+                              AND completed_at IS NULL
+                            """,
+                            (_utc_text(completed_time), user_id, memory_id, vector_id),
+                        )
+                        if cursor.rowcount != 1:
+                            raise StorageError("SQLite forgetting completion rejected")
+                        connection.execute(
+                            "DELETE FROM memory_vector_mappings WHERE memory_id = ? AND vector_id = ?",
+                            (memory_id, vector_id),
+                        )
+                        connection.commit()
+                    except StorageError:
+                        connection.rollback()
+                        raise
+                    except (sqlite3.Error, TypeError, ValueError) as error:
+                        connection.rollback()
+                        raise StorageError("SQLite forgetting completion failed") from error
+            except StorageError:
+                raise
+            except sqlite3.Error as error:
+                raise StorageError("SQLite forgetting completion failed") from error
+        return ForgettingRecord(
+            memory_id=memory_id,
+            user_id=user_id,
+            vector_id=vector_id,
+            cleanup_state=ForgettingCleanupState.COMPLETE,
+            requested_at=stored.requested_at,
+            completed_at=completed_time,
+        )
 
     def find_supersession_target(
         self,
@@ -552,6 +757,17 @@ def _row_to_memory(row: sqlite3.Row) -> MemoryRecord:
         supersedes=tuple(json.loads(str(row["supersedes_json"]))),
         superseded_by=_optional_text(row["superseded_by"]),
         deleted_at=_optional_datetime(row["deleted_at"]),
+    )
+
+
+def _row_to_forgetting(row: sqlite3.Row) -> ForgettingRecord:
+    return ForgettingRecord(
+        memory_id=str(row["memory_id"]),
+        user_id=str(row["user_id"]),
+        vector_id=None if row["vector_id"] is None else int(row["vector_id"]),
+        cleanup_state=ForgettingCleanupState(str(row["cleanup_state"])),
+        requested_at=_datetime(row["requested_at"]),
+        completed_at=_optional_datetime(row["completed_at"]),
     )
 
 

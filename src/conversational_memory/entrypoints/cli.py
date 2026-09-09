@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
         "demo-expiration",
         help="Run the real M6 trusted-clock expiration demonstration",
     )
+    subcommands.add_parser(
+        "demo-forgetting",
+        help="Run the real M7 owner-scoped durable forgetting demonstration",
+    )
     return parser
 
 
@@ -887,6 +891,261 @@ def _demo_expiration() -> int:
     return 0
 
 
+def _demo_forgetting() -> int:
+    from conversational_memory.application import (
+        AdmissionRequest,
+        ForgetRequest,
+        RequestContext,
+        RetrievalIntent,
+        RetrievalRequest,
+    )
+    from conversational_memory.composition import compose_local_memory_service
+
+    now = datetime(2026, 9, 9, 12, tzinfo=UTC)
+    original_request = AdmissionRequest(
+        idempotency_key="m7-original",
+        conversation_id="m7-demo-conversation",
+        turn_id="m7-original",
+        content="I prefer FAISS for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="FAISS",
+        source_type="explicit_user",
+    )
+    replacement_request = AdmissionRequest(
+        idempotency_key="m7-replacement",
+        conversation_id="m7-demo-conversation",
+        turn_id="m7-replacement",
+        content="I prefer PostgreSQL for vector database search.",
+        memory_type="preference",
+        subject="vector database",
+        value="PostgreSQL",
+        source_type="explicit_user",
+        supersedes_memory_id="m7-original-memory",
+    )
+    unrelated_request = AdmissionRequest(
+        idempotency_key="m7-unrelated",
+        conversation_id="m7-demo-conversation",
+        turn_id="m7-unrelated",
+        content="My favorite color is blue.",
+        memory_type="preference",
+        subject="favorite color",
+        value="blue",
+        source_type="explicit_user",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m7-") as temporary:
+        root = Path(temporary)
+        database_path = root / "memory.sqlite3"
+        index_directory = root / "index"
+        service = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(
+                "m7-original-memory",
+                "m7-replacement-memory",
+                "m7-unrelated-memory",
+            ),
+            create_index_if_missing=True,
+            relevance_threshold=0.50,
+        )
+        original = service.admit(
+            RequestContext(user_id="demo-user", request_id="m7-original"),
+            original_request,
+        )
+        replacement = service.admit(
+            RequestContext(user_id="demo-user", request_id="m7-replacement"),
+            replacement_request,
+        )
+        unrelated = service.admit(
+            RequestContext(user_id="demo-user", request_id="m7-unrelated"),
+            unrelated_request,
+        )
+        if (
+            original.memory_id is None
+            or replacement.memory_id is None
+            or unrelated.memory_id is None
+        ):
+            raise RuntimeError("M7 demo admissions failed")
+
+        with sqlite3.connect(database_path) as connection:
+            mappings_before = dict(
+                connection.execute(
+                    "SELECT memory_id, vector_id FROM memory_vector_mappings"
+                ).fetchall()
+            )
+        vector_count_before = int(
+            json.loads(
+                (index_directory / "memory.faiss.meta.json").read_text()
+            )["vector_count"]
+        )
+
+        cross_owner = service.forget(
+            RequestContext(user_id="other-user", request_id="m7-cross-owner"),
+            ForgetRequest(memory_id=replacement.memory_id),
+        )
+        forgotten = service.forget(
+            RequestContext(user_id="demo-user", request_id="m7-forget"),
+            ForgetRequest(memory_id=replacement.memory_id),
+        )
+        query = replacement_request.content
+        immediate_current = service.retrieve(
+            RequestContext(user_id="demo-user", request_id="m7-current"),
+            RetrievalRequest(query=query, limit=10, token_budget=256),
+        )
+        immediate_historical = service.retrieve(
+            RequestContext(user_id="demo-user", request_id="m7-history"),
+            RetrievalRequest(
+                query=query,
+                limit=10,
+                token_budget=256,
+                intent=RetrievalIntent.HISTORICAL,
+            ),
+        )
+
+        restarted = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=_model_cache_directory(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        restart_current = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m7-restart-current"),
+            RetrievalRequest(query=query, limit=10, token_budget=256),
+        )
+        restart_historical = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m7-restart-history"),
+            RetrievalRequest(
+                query=query,
+                limit=10,
+                token_budget=256,
+                intent=RetrievalIntent.HISTORICAL,
+            ),
+        )
+        unrelated_after_restart = restarted.retrieve(
+            RequestContext(user_id="demo-user", request_id="m7-unrelated-check"),
+            RetrievalRequest(
+                query=unrelated_request.content,
+                limit=10,
+                token_budget=256,
+            ),
+        )
+
+        with sqlite3.connect(database_path) as connection:
+            memory_rows = {
+                row[0]: row[1:]
+                for row in connection.execute(
+                    """
+                    SELECT memory_id, lifecycle_status, supersedes_json,
+                           superseded_by, deleted_at
+                    FROM memories ORDER BY memory_id
+                    """
+                ).fetchall()
+            }
+            forgetting_row = connection.execute(
+                """
+                SELECT vector_id, cleanup_state, requested_at, completed_at
+                FROM memory_forgetting
+                WHERE user_id = ? AND memory_id = ?
+                """,
+                ("demo-user", replacement.memory_id),
+            ).fetchone()
+            mappings_after = dict(
+                connection.execute(
+                    "SELECT memory_id, vector_id FROM memory_vector_mappings"
+                ).fetchall()
+            )
+        vector_count_after = int(
+            json.loads(
+                (index_directory / "memory.faiss.meta.json").read_text()
+            )["vector_count"]
+        )
+        if forgetting_row is None:
+            raise RuntimeError("M7 demo forgetting state was not persisted")
+
+        original_state = memory_rows[original.memory_id]
+        replacement_state = memory_rows[replacement.memory_id]
+        forgotten_vector_id = mappings_before[replacement.memory_id]
+        unrelated_vector_id = mappings_before[unrelated.memory_id]
+        immediate_absent = (
+            replacement.memory_id not in immediate_current.included_memory_ids
+            and replacement.memory_id not in immediate_historical.included_memory_ids
+        )
+        restart_absent = (
+            replacement.memory_id not in restart_current.included_memory_ids
+            and replacement.memory_id not in restart_historical.included_memory_ids
+        )
+        relationships_preserved = (
+            original_state[0] == "superseded"
+            and original_state[2] == replacement.memory_id
+            and json.loads(str(replacement_state[1])) == [original.memory_id]
+        )
+        forgotten_vector_absent = (
+            replacement.memory_id not in mappings_after
+            and forgetting_row[0] == forgotten_vector_id
+            and vector_count_after == vector_count_before - 1
+        )
+        unrelated_vector_preserved = (
+            mappings_after.get(unrelated.memory_id) == unrelated_vector_id
+            and unrelated.memory_id in unrelated_after_restart.included_memory_ids
+        )
+        if cross_owner.outcome.value != "not_found":
+            raise RuntimeError("M7 demo cross-owner forgetting was not opaque")
+        if forgotten.outcome.value != "forgotten" or not immediate_absent:
+            raise RuntimeError("M7 demo owner forgetting did not exclude the target")
+        if not restart_absent or not relationships_preserved:
+            raise RuntimeError("M7 demo restart or no-reactivation proof failed")
+        if not forgotten_vector_absent or not unrelated_vector_preserved:
+            raise RuntimeError("M7 demo targeted FAISS cleanup proof failed")
+
+        output = {
+            "authorization": {
+                "cross_owner_outcome": cross_owner.outcome.value,
+                "owner_outcome": forgotten.outcome.value,
+            },
+            "exclusion": {
+                "immediate_current_absent": replacement.memory_id
+                not in immediate_current.included_memory_ids,
+                "immediate_historical_absent": replacement.memory_id
+                not in immediate_historical.included_memory_ids,
+            },
+            "restart": {
+                "current_absent": replacement.memory_id
+                not in restart_current.included_memory_ids,
+                "historical_absent": replacement.memory_id
+                not in restart_historical.included_memory_ids,
+            },
+            "relationships": {
+                "original_lifecycle_status": original_state[0],
+                "original_superseded_by": original_state[2],
+                "replacement_supersedes": json.loads(str(replacement_state[1])),
+                "predecessor_reactivated": original_state[0] != "superseded",
+            },
+            "physical_cleanup": {
+                "forgotten_vector_id": forgotten_vector_id,
+                "forgotten_vector_absent": forgotten_vector_absent,
+                "unrelated_vector_id": unrelated_vector_id,
+                "unrelated_vector_preserved": unrelated_vector_preserved,
+                "vector_count_before": vector_count_before,
+                "vector_count_after": vector_count_after,
+            },
+            "persisted_forgetting": {
+                "memory_id": replacement.memory_id,
+                "vector_id": forgetting_row[0],
+                "cleanup_state": forgetting_row[1],
+                "requested_at": forgetting_row[2],
+                "completed_at": forgetting_row[3],
+                "deleted_at": replacement_state[3],
+            },
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -903,6 +1162,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_history()
     if arguments.command == "demo-expiration":
         return _demo_expiration()
+    if arguments.command == "demo-forgetting":
+        return _demo_forgetting()
     return 0
 
 

@@ -10,6 +10,8 @@ from conversational_memory.domain.models import MemoryRecord
 from .contracts import (
     Embedding,
     ExistingAdmission,
+    ForgettingRecord,
+    ForgettingTarget,
     HydratedMemory,
     PersistedPendingMemory,
     VectorSearchHit,
@@ -41,6 +43,23 @@ class MemoryRepositoryPort(Protocol):
         idempotency_key: str,
         request_fingerprint: str,
     ) -> PersistedPendingMemory: ...
+
+    def find_forgetting_target(
+        self, *, user_id: str, memory_id: str
+    ) -> ForgettingTarget | None: ...
+
+    def begin_forgetting(
+        self, *, user_id: str, memory_id: str, requested_at: datetime
+    ) -> ForgettingRecord | None: ...
+
+    def acknowledge_forgetting_complete(
+        self,
+        *,
+        user_id: str,
+        memory_id: str,
+        vector_id: int,
+        completed_at: datetime,
+    ) -> ForgettingRecord: ...
 
     def find_supersession_target(
         self, *, user_id: str, memory_id: str
@@ -93,6 +112,8 @@ class VectorIndexPort(Protocol):
     """Durably add one stable vector identifier to the derived index."""
 
     def add(self, *, vector_id: int, embedding: Embedding) -> None: ...
+
+    def remove(self, *, vector_id: int) -> None: ...
 
     def search(
         self,

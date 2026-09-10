@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import struct
 from collections.abc import Iterator
@@ -23,12 +24,19 @@ from conversational_memory.application.contracts import (
     PersistedPendingMemory,
 )
 from conversational_memory.application.errors import StorageError
+from conversational_memory.application.recovery import (
+    RecoveryCleanup,
+    RecoveryInventory,
+    RecoveryReadiness,
+    RecoveryVector,
+)
 from conversational_memory.domain.eligibility import (
     is_current_state_eligible,
     is_historical_eligible,
 )
 from conversational_memory.domain.expiration import validate_trusted_utc
 from conversational_memory.domain.forgetting import ForgettingCleanupState
+from conversational_memory.domain.idempotency import normalize_text
 from conversational_memory.domain.models import (
     AdmissionDecision,
     EvidenceAuthority,
@@ -40,7 +48,12 @@ from conversational_memory.domain.models import (
 )
 from conversational_memory.domain.supersession import validate_supersession_target
 
-from .migrations import initialize_schema
+from .migrations import (
+    expected_migration_checksums,
+    expected_schema_signature,
+    initialize_schema,
+    schema_signature,
+)
 
 _WRITE_LOCK = RLock()
 
@@ -51,6 +64,107 @@ class SQLiteMemoryRepository:
     def __init__(self, database_path: str | Path) -> None:
         self._database_path = Path(database_path)
         initialize_schema(self._database_path)
+
+    def recovery_inventory(
+        self,
+        *,
+        embedding_model: str,
+        vector_dimension: int,
+    ) -> RecoveryInventory:
+        """Audit SQLite authority and return immutable future-rebuild inputs."""
+        if (
+            not embedding_model.strip()
+            or isinstance(vector_dimension, bool)
+            or vector_dimension <= 0
+        ):
+            return _unavailable_inventory("unavailable_embedding_configuration")
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN")
+                applied = tuple(
+                    (int(row["version"]), str(row["checksum"]))
+                    for row in connection.execute(
+                        "SELECT version, checksum FROM schema_migrations ORDER BY version"
+                    )
+                )
+                if applied != expected_migration_checksums():
+                    return _unavailable_inventory("unavailable_schema_or_migration")
+                if schema_signature(connection) != expected_schema_signature():
+                    return _unavailable_inventory("unavailable_schema_or_migration")
+                try:
+                    integrity = connection.execute("PRAGMA integrity_check").fetchone()
+                    foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+                except sqlite3.Error:
+                    return _unavailable_inventory("unavailable_sqlite_integrity")
+                if integrity is None or str(integrity[0]) != "ok" or foreign_keys:
+                    return _unavailable_inventory("unavailable_sqlite_integrity")
+                rows = connection.execute(
+                    """
+                    SELECT m.*,
+                           e.embedding_blob, e.embedding_model, e.embedding_dimension,
+                           v.vector_id, f.vector_id AS forgetting_vector_id,
+                           f.cleanup_state,
+                           f.requested_at AS forgetting_requested_at,
+                           f.completed_at
+                    FROM memories AS m
+                    LEFT JOIN memory_embeddings AS e ON e.memory_id = m.memory_id
+                    LEFT JOIN memory_vector_mappings AS v ON v.memory_id = m.memory_id
+                    LEFT JOIN memory_forgetting AS f ON f.memory_id = m.memory_id
+                    ORDER BY v.vector_id, m.memory_id
+                    """
+                ).fetchall()
+        except (sqlite3.Error, OSError, UnicodeError, ValueError, TypeError):
+            return _unavailable_inventory("unavailable_schema_or_migration")
+
+        return _classify_recovery_rows(
+            rows,
+            embedding_model=embedding_model,
+            vector_dimension=vector_dimension,
+        )
+
+    def adopt_forgetting_vector_id(
+        self, *, user_id: str, memory_id: str, vector_id: int
+    ) -> None:
+        """Atomically bind one audited later mapping to null-ID cleanup."""
+        with _WRITE_LOCK:
+            try:
+                with self._connection() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        """
+                        SELECT f.vector_id AS stored_vector_id, v.vector_id AS live_vector_id
+                        FROM memory_forgetting AS f
+                        JOIN memories AS m
+                          ON m.memory_id = f.memory_id AND m.user_id = f.user_id
+                        JOIN memory_vector_mappings AS v ON v.memory_id = f.memory_id
+                        WHERE f.user_id = ? AND f.memory_id = ?
+                          AND m.deleted_at IS NOT NULL
+                          AND f.cleanup_state = 'cleanup_pending'
+                          AND f.completed_at IS NULL
+                        """,
+                        (user_id, memory_id),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or row["stored_vector_id"] is not None
+                        or int(row["live_vector_id"]) != vector_id
+                    ):
+                        raise StorageError("SQLite forgetting identity adoption rejected")
+                    cursor = connection.execute(
+                        """
+                        UPDATE memory_forgetting SET vector_id = ?
+                        WHERE user_id = ? AND memory_id = ? AND vector_id IS NULL
+                          AND cleanup_state = 'cleanup_pending' AND completed_at IS NULL
+                        """,
+                        (vector_id, user_id, memory_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise StorageError("SQLite forgetting identity adoption rejected")
+                    connection.commit()
+            except StorageError:
+                raise
+            except sqlite3.Error as error:
+                raise StorageError("SQLite forgetting identity adoption failed") from error
 
     def find(self, *, user_id: str, idempotency_key: str) -> ExistingAdmission | None:
         try:
@@ -833,3 +947,237 @@ def _optional_datetime(value: Any) -> datetime | None:
 
 def _optional_text(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def _unavailable_inventory(reason: str) -> RecoveryInventory:
+    return RecoveryInventory(
+        readiness=RecoveryReadiness.UNAVAILABLE,
+        reason=reason,
+        rebuild_items=(),
+        pending_count=0,
+        failed_count=0,
+        cleanup_pending_count=0,
+        cleanup_items=(),
+    )
+
+
+def _classify_recovery_rows(
+    rows: list[sqlite3.Row],
+    *,
+    embedding_model: str,
+    vector_dimension: int,
+) -> RecoveryInventory:
+    seen_memories: set[str] = set()
+    live_vector_owners: dict[int, str] = {}
+    forgetting_vector_owners: dict[int, str] = {}
+    rebuild_items: list[RecoveryVector] = []
+    pending_count = 0
+    failed_count = 0
+    cleanup_pending_count = 0
+    cleanup_items: list[RecoveryCleanup] = []
+    degraded = False
+    memories: dict[str, MemoryRecord] = {}
+
+    for row in rows:
+        memory_id = str(row["memory_id"])
+        if memory_id in seen_memories:
+            return _unavailable_inventory("unavailable_authoritative_identity")
+        seen_memories.add(memory_id)
+        try:
+            memory = _row_to_memory(row)
+            state = memory.indexing_state
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return _unavailable_inventory("unavailable_authoritative_identity")
+        memories[memory_id] = memory
+        deleted = row["deleted_at"] is not None
+        cleanup_state = _optional_text(row["cleanup_state"])
+        try:
+            mapping_id = (
+                None if row["vector_id"] is None else int(row["vector_id"])
+            )
+            forgetting_id = (
+                None
+                if row["forgetting_vector_id"] is None
+                else int(row["forgetting_vector_id"])
+            )
+        except (TypeError, ValueError):
+            return _unavailable_inventory("unavailable_authoritative_identity")
+        if mapping_id is not None:
+            if mapping_id <= 0:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            if live_vector_owners.get(mapping_id, memory_id) != memory_id:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            if forgetting_vector_owners.get(mapping_id, memory_id) != memory_id:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            live_vector_owners[mapping_id] = memory_id
+        if forgetting_id is not None:
+            if forgetting_id <= 0:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            if forgetting_vector_owners.get(forgetting_id, memory_id) != memory_id:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            if live_vector_owners.get(forgetting_id, memory_id) != memory_id:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            forgetting_vector_owners[forgetting_id] = memory_id
+        if deleted != (cleanup_state is not None):
+            return _unavailable_inventory("unavailable_authoritative_identity")
+        if cleanup_state is not None:
+            try:
+                forgetting = ForgettingRecord(
+                    memory_id=memory_id,
+                    user_id=str(row["user_id"]),
+                    vector_id=forgetting_id,
+                    cleanup_state=ForgettingCleanupState(cleanup_state),
+                    requested_at=_datetime(row["forgetting_requested_at"]),
+                    completed_at=_optional_datetime(row["completed_at"]),
+                )
+                if memory.deleted_at is None:
+                    raise ValueError("forgetting requires a deletion timestamp")
+                validate_trusted_utc(memory.deleted_at)
+                if forgetting.requested_at != memory.deleted_at:
+                    raise ValueError("forgetting timestamps do not match")
+            except (TypeError, ValueError):
+                return _unavailable_inventory("unavailable_authoritative_identity")
+        if cleanup_state == "complete":
+            if (
+                mapping_id is not None
+                or forgetting_id is None
+                or row["completed_at"] is None
+            ):
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            continue
+        if cleanup_state == "cleanup_pending":
+            cleanup_pending_count += 1
+            degraded = True
+            if forgetting_id is not None and mapping_id != forgetting_id:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            cleanup_items.append(
+                RecoveryCleanup(
+                    memory_id=memory_id,
+                    user_id=str(row["user_id"]),
+                    stored_vector_id=forgetting_id,
+                    live_vector_id=mapping_id,
+                )
+            )
+            continue
+        if cleanup_state is not None:
+            return _unavailable_inventory("unavailable_authoritative_identity")
+
+        pending_count += int(state is IndexingState.PENDING)
+        failed_count += int(state is IndexingState.FAILED)
+        degraded |= state is not IndexingState.INDEXED
+
+        if mapping_id is None or row["embedding_blob"] is None:
+            if state is IndexingState.INDEXED:
+                return _unavailable_inventory("unavailable_authoritative_identity")
+            degraded = True
+            continue
+        try:
+            dimension = int(row["embedding_dimension"])
+            blob = bytes(row["embedding_blob"])
+            values = struct.unpack(f"<{dimension}f", blob)
+            valid_values = len(blob) == dimension * 4 and all(
+                math.isfinite(value) for value in values
+            )
+        except (TypeError, ValueError, struct.error):
+            valid_values = False
+            values = ()
+            dimension = 0
+        configured = (
+            str(row["embedding_model"]) == embedding_model
+            and dimension == vector_dimension
+            and valid_values
+        )
+        if not configured:
+            if state is IndexingState.INDEXED:
+                return _unavailable_inventory("unavailable_embedding_configuration")
+            degraded = True
+            continue
+        rebuild_items.append(
+            RecoveryVector(
+                memory_id=memory_id,
+                user_id=str(row["user_id"]),
+                vector_id=mapping_id,
+                embedding=Embedding(
+                    values=tuple(values),
+                    model_id=embedding_model,
+                    dimension=dimension,
+                ),
+            )
+        )
+
+    if not _valid_recovery_relationships(memories):
+        return _unavailable_inventory("unavailable_authoritative_identity")
+    return RecoveryInventory(
+        readiness=RecoveryReadiness.DEGRADED if degraded else RecoveryReadiness.READY,
+        reason=(
+            "degraded_excluded_work_pending"
+            if degraded
+            else "ready_existing_generation"
+        ),
+        rebuild_items=tuple(rebuild_items),
+        pending_count=pending_count,
+        failed_count=failed_count,
+        cleanup_pending_count=cleanup_pending_count,
+        cleanup_items=tuple(cleanup_items),
+    )
+
+
+def _valid_recovery_relationships(memories: dict[str, MemoryRecord]) -> bool:
+    for memory in memories.values():
+        if memory.lifecycle_status is LifecycleStatus.SUPERSEDED:
+            if memory.superseded_by is None:
+                return False
+        elif memory.superseded_by is not None:
+            return False
+        if len(memory.supersedes) > 1:
+            return False
+        for target_id in memory.supersedes:
+            target = memories.get(target_id)
+            replacement_subject = (
+                None if memory.subject is None else normalize_text(memory.subject)
+            )
+            target_subject = (
+                None if target is None or target.subject is None
+                else normalize_text(target.subject)
+            )
+            if (
+                target_id == memory.memory_id
+                or memory.indexing_state is not IndexingState.INDEXED
+                or target is None
+                or target.user_id != memory.user_id
+                or target.indexing_state is not IndexingState.INDEXED
+                or target.lifecycle_status is not LifecycleStatus.SUPERSEDED
+                or target.superseded_by != memory.memory_id
+                or memory.provenance.authority
+                is not EvidenceAuthority.EXPLICIT_USER
+                or not replacement_subject
+                or not target_subject
+                or replacement_subject != target_subject
+                or memory.memory_type is not target.memory_type
+            ):
+                return False
+        if memory.superseded_by is not None:
+            replacement = memories.get(memory.superseded_by)
+            if (
+                replacement is None
+                or replacement.user_id != memory.user_id
+                or memory.memory_id not in replacement.supersedes
+            ):
+                return False
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(memory_id: str) -> bool:
+        if memory_id in visiting:
+            return False
+        if memory_id in visited:
+            return True
+        visiting.add(memory_id)
+        for target_id in memories[memory_id].supersedes:
+            if target_id in memories and not visit(target_id):
+                return False
+        visiting.remove(memory_id)
+        visited.add(memory_id)
+        return True
+
+    return all(visit(memory_id) for memory_id in memories)

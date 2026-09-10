@@ -237,6 +237,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M8 — Recovery and Reconciliation
 
+- **Progress:** Complete on 2026-09-10 · independent L4 APPROVE and all three required human quiz answers passed.
 - **Observable outcome:** Startup safely rebuilds missing or inconsistent FAISS state from authoritative SQLite embeddings and retries pending records without duplicate vectors or unsafe retrieval.
 - **Included behavior:** SQLite integrity and schema checks; ordered transactional migrations; model/dimension metadata validation; empty-index creation; FAISS load and mapping comparison; orphan removal; rebuild from stored float32 embeddings; pending/failed retry; stable mapping; atomic replacement of a verified rebuilt index; degraded readiness only for safely excluded records; fail-closed unsafe startup; shared process write lock.
 - **Exclusions:** Multiple simultaneous embedding models, remote workers, queues, distributed recovery, high availability, and production-scale optimization.
@@ -314,3 +315,4 @@ Total planned milestone token budget: 500000.
 
 - M6 completed on 2026-09-08 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification.
 - M7 completed on 2026-09-09 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M8 remains unstarted pending separate G0 authorization.
+- M8 completed on 2026-09-10 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M9 remains unstarted pending separate G0 authorization.

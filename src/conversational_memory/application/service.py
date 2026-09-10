@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from threading import Lock
 
 from conversational_memory.domain.admission import evaluate_credential_admission
 from conversational_memory.domain.context import (
@@ -61,6 +60,7 @@ from .errors import (
     StorageError,
     ValidationError,
 )
+from .locking import PROCESS_WRITE_LOCK
 from .ports import (
     ClockPort,
     EmbeddingPort,
@@ -72,7 +72,6 @@ from .ports import (
 )
 
 _M1_TOKENIZER = "cl100k_base"
-_PROCESS_WRITE_LOCK = Lock()
 _MISSING_RELEVANCE_THRESHOLD = object()
 
 
@@ -111,7 +110,7 @@ class MemoryService:
         self._validate_context(context)
         fingerprint_input, idempotency_key, fingerprint = self._canonicalize(request)
 
-        with _PROCESS_WRITE_LOCK:
+        with PROCESS_WRITE_LOCK:
             existing = self._idempotency.find(
                 user_id=context.user_id,
                 idempotency_key=idempotency_key,
@@ -330,7 +329,7 @@ class MemoryService:
     ) -> ForgetResult:
         """Logically forget one owned memory before attempting physical cleanup."""
         self._validate_context(context)
-        with _PROCESS_WRITE_LOCK:
+        with PROCESS_WRITE_LOCK:
             target = self._repository.find_forgetting_target(
                 user_id=context.user_id,
                 memory_id=request.memory_id,

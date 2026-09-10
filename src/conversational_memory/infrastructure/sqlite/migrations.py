@@ -37,6 +37,50 @@ def initialize_schema(database_path: Path) -> None:
         raise StorageError("SQLite schema initialization failed") from error
 
 
+def expected_migration_checksums() -> tuple[tuple[int, str], ...]:
+    """Return the immutable ordered migration identity without touching SQLite."""
+    migrations = _load_migrations()
+    _validate_migration_sequence(migrations)
+    return tuple((version, checksum) for version, checksum, _ in migrations)
+
+
+def expected_schema_signature() -> tuple[tuple[str, str, str, str | None], ...]:
+    """Build the exact expected SQLite catalog in isolated memory."""
+    migrations = _load_migrations()
+    _validate_migration_sequence(migrations)
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                checksum TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        for _, _, script in migrations:
+            for statement in _iter_statements(script):
+                connection.execute(statement)
+        return schema_signature(connection)
+
+
+def schema_signature(
+    connection: sqlite3.Connection,
+) -> tuple[tuple[str, str, str, str | None], ...]:
+    """Return canonical tables, indexes, and their constraint-bearing SQL."""
+    return tuple(
+        (str(kind), str(name), str(table), None if sql is None else " ".join(str(sql).split()))
+        for kind, name, table, sql in connection.execute(
+            """
+            SELECT type, name, tbl_name, sql
+            FROM sqlite_master
+            WHERE type IN ('table', 'index')
+            ORDER BY type, name
+            """
+        )
+    )
+
+
 def _connect(database_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(database_path)
     connection.execute("PRAGMA foreign_keys = ON")

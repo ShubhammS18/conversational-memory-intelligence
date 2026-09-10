@@ -22,6 +22,12 @@ from conversational_memory.application.errors import (
     IndexingError,
     ServiceUnavailableError,
 )
+from conversational_memory.application.recovery import (
+    RecoveryIndexError,
+    RecoveryInventory,
+    RecoveryPublication,
+    RecoveryReadiness,
+)
 
 _FORMAT_VERSION = 1
 _INDEX_KIND = "IndexIDMap2(IndexFlatIP)"
@@ -43,6 +49,158 @@ _MAX_INT64 = 2**63 - 1
 
 class FaissVectorIndex:
     """Persist stable vector IDs in verified FAISS generations."""
+
+    @classmethod
+    def reconcile_from_inventory(
+        cls,
+        index_directory: str | Path,
+        *,
+        embedding_model: str,
+        vector_dimension: int,
+        inventory: RecoveryInventory,
+    ) -> RecoveryPublication:
+        """Publish the exact stable-ID generation derived from audited SQLite."""
+        if inventory.readiness is RecoveryReadiness.UNAVAILABLE:
+            raise IndexingError("FAISS recovery requires a safe SQLite inventory")
+        adapter = cls.__new__(cls)
+        adapter._directory = Path(index_directory)
+        adapter._embedding_model = embedding_model
+        adapter._vector_dimension = vector_dimension
+        adapter._lock = RLock()
+        adapter._final_index = adapter._directory / _FINAL_INDEX_NAME
+        adapter._final_metadata = adapter._directory / _FINAL_METADATA_NAME
+        try:
+            adapter._directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise RecoveryIndexError("unavailable_publication") from error
+
+        desired_ids = [item.vector_id for item in inventory.rebuild_items]
+        if len(desired_ids) != len(set(desired_ids)):
+            raise RecoveryIndexError("unavailable_rebuild")
+        desired_set = set(desired_ids)
+        current_ids: set[int] = set()
+        final_pair_exists = adapter._final_index.is_file() and adapter._final_metadata.is_file()
+        if final_pair_exists:
+            try:
+                current = adapter._load_startup_generation()
+                current_ids = set(_index_vector_ids(current))
+                if current_ids == desired_set and adapter._matches_inventory(
+                    current, inventory
+                ):
+                    adapter._index = current
+                    return RecoveryPublication(
+                        rebuilt=False,
+                        vector_count=len(current_ids),
+                        orphan_vectors_removed=0,
+                    )
+            except (ConfigurationMismatchError, ServiceUnavailableError):
+                current_ids = set()
+
+        try:
+            candidate = _new_index(vector_dimension)
+            for item in inventory.rebuild_items:
+                vector = adapter._validated_vector(item.embedding)
+                candidate.add_with_ids(
+                    vector,
+                    np.asarray([item.vector_id], dtype=np.int64),
+                )
+        except (IndexingError, RuntimeError, ValueError, TypeError) as error:
+            raise RecoveryIndexError("unavailable_rebuild") from error
+
+        persisted = adapter._persist_recovery_generation(candidate)
+        try:
+            verified = adapter._load_startup_generation()
+            final_ids = set(_index_vector_ids(verified))
+            if final_ids != desired_set or set(_index_vector_ids(persisted)) != desired_set:
+                raise ServiceUnavailableError(
+                    "FAISS recovered generation does not match inventory"
+                )
+        except (
+            ConfigurationMismatchError,
+            ServiceUnavailableError,
+            IndexingError,
+            RuntimeError,
+        ) as error:
+            raise RecoveryIndexError("unavailable_post_publication_verification") from error
+        adapter._index = verified
+        adapter._cleanup_stale_temporaries()
+        return RecoveryPublication(
+            rebuilt=True,
+            vector_count=len(final_ids),
+            orphan_vectors_removed=len(current_ids - desired_set),
+        )
+
+    def _persist_recovery_generation(self, candidate: Any) -> Any:
+        """Build, publish, and verify a recovery generation with exact stage errors."""
+        generation_id = str(uuid4())
+        index_temporary = self._directory / f"memory.faiss.{generation_id}.tmp"
+        metadata_temporary = self._directory / f"memory.faiss.meta.{generation_id}.json.tmp"
+        try:
+            faiss.write_index(candidate, str(index_temporary))
+            _file_sync(index_temporary)
+            vector_ids = _index_vector_ids(candidate)
+            metadata = {
+                "format_version": _FORMAT_VERSION,
+                "generation_id": generation_id,
+                "embedding_model": self._embedding_model,
+                "vector_dimension": self._vector_dimension,
+                "index_kind": _INDEX_KIND,
+                "vector_count": len(vector_ids),
+                "vector_ids_sha256": _vector_ids_sha256(vector_ids),
+                "index_sha256": _file_sha256(index_temporary),
+            }
+            _write_canonical_metadata(metadata_temporary, metadata)
+            self._verify_pair(
+                index_temporary,
+                metadata_temporary,
+                expected_generation_id=generation_id,
+                expected_vector_id=None,
+            )
+        except (
+            ConfigurationMismatchError,
+            ServiceUnavailableError,
+            IndexingError,
+            OSError,
+            RuntimeError,
+        ) as error:
+            raise RecoveryIndexError("unavailable_rebuild") from error
+
+        try:
+            os.replace(index_temporary, self._final_index)
+            os.replace(metadata_temporary, self._final_metadata)
+            _directory_sync(self._directory)
+        except OSError as error:
+            raise RecoveryIndexError("unavailable_publication") from error
+
+        try:
+            return self._verify_pair(
+                self._final_index,
+                self._final_metadata,
+                expected_generation_id=generation_id,
+                expected_vector_id=None,
+            )
+        except (
+            ConfigurationMismatchError,
+            ServiceUnavailableError,
+            IndexingError,
+            OSError,
+            RuntimeError,
+        ) as error:
+            raise RecoveryIndexError(
+                "unavailable_post_publication_verification"
+            ) from error
+
+    def _matches_inventory(self, index: Any, inventory: RecoveryInventory) -> bool:
+        try:
+            return all(
+                np.array_equal(
+                    np.asarray(index.reconstruct(item.vector_id), dtype=np.float32),
+                    self._validated_vector(item.embedding)[0],
+                )
+                for item in inventory.rebuild_items
+            )
+        except RuntimeError:
+            return False
 
     def __init__(
         self,
@@ -235,6 +393,7 @@ class FaissVectorIndex:
 
             os.replace(index_temporary, self._final_index)
             os.replace(metadata_temporary, self._final_metadata)
+            _directory_sync(self._directory)
             return self._verify_pair(
                 self._final_index,
                 self._final_metadata,
@@ -294,6 +453,29 @@ class FaissVectorIndex:
                     path.unlink()
                 except OSError:
                     pass
+
+
+class FaissRecoveryAdapter:
+    """Application-facing exact-generation recovery adapter."""
+
+    def __init__(
+        self,
+        index_directory: str | Path,
+        *,
+        embedding_model: str,
+        vector_dimension: int,
+    ) -> None:
+        self._index_directory = Path(index_directory)
+        self._embedding_model = embedding_model
+        self._vector_dimension = vector_dimension
+
+    def reconcile(self, inventory: RecoveryInventory) -> RecoveryPublication:
+        return FaissVectorIndex.reconcile_from_inventory(
+            self._index_directory,
+            embedding_model=self._embedding_model,
+            vector_dimension=self._vector_dimension,
+            inventory=inventory,
+        )
 
 
 def _new_index(vector_dimension: int) -> Any:
@@ -416,6 +598,14 @@ def _canonical_metadata_bytes(metadata: dict[str, object]) -> bytes:
 def _file_sync(path: Path) -> None:
     with path.open("r+b") as stream:
         os.fsync(stream.fileno())
+
+
+def _directory_sync(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _is_lower_uuid4(value: str) -> bool:

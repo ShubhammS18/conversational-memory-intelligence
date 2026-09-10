@@ -49,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
         "demo-forgetting",
         help="Run the real M7 owner-scoped durable forgetting demonstration",
     )
+    subcommands.add_parser(
+        "demo-recovery",
+        help="Run the real M8 SQLite-authoritative recovery demonstration",
+    )
     return parser
 
 
@@ -1146,6 +1150,197 @@ def _demo_forgetting() -> int:
     return 0
 
 
+def _demo_recovery() -> int:
+    from conversational_memory.application import (
+        AdmissionRequest,
+        ForgetRequest,
+        RequestContext,
+        RetrievalIntent,
+        RetrievalRequest,
+    )
+    from conversational_memory.composition import (
+        ALL_MPNET_BASE_V2_DIMENSION,
+        ALL_MPNET_BASE_V2_MODEL_ID,
+        FaissVectorIndex,
+        SentenceTransformerEmbedder,
+        SQLiteMemoryRepository,
+        TiktokenTokenCounter,
+        compose_local_memory_service,
+        compose_recovered_memory_service,
+    )
+    now = datetime(2026, 9, 9, 14, tzinfo=UTC)
+    current_request = AdmissionRequest(
+        idempotency_key="m8-current",
+        conversation_id="m8-demo",
+        turn_id="m8-current",
+        content="I use SQLite as my authoritative recovery store.",
+        memory_type="fact",
+        subject="recovery store",
+        value="SQLite",
+        source_type="explicit_user",
+    )
+    forgotten_request = AdmissionRequest(
+        idempotency_key="m8-forgotten",
+        conversation_id="m8-demo",
+        turn_id="m8-forgotten",
+        content="I previously used a retired recovery store.",
+        memory_type="fact",
+        subject="retired recovery store",
+        value="retired",
+        source_type="explicit_user",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m8-") as temporary:
+        root = Path(temporary)
+        database_path = root / "memory.sqlite3"
+        index_directory = root / "index"
+        cache = _model_cache_directory()
+        service = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=cache,
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds("m8-current-memory", "m8-forgotten-memory"),
+            relevance_threshold=0.50,
+        )
+        current = service.admit(
+            RequestContext(user_id="demo-user", request_id="m8-current"),
+            current_request,
+        )
+        forgotten = service.admit(
+            RequestContext(user_id="demo-user", request_id="m8-forgotten"),
+            forgotten_request,
+        )
+        if current.memory_id is None or forgotten.memory_id is None:
+            raise RuntimeError("M8 demo admissions failed")
+        repository = SQLiteMemoryRepository(database_path)
+        current_existing = repository.find(
+            user_id="demo-user", idempotency_key="m8-current"
+        )
+        if current_existing is None or current_existing.indexing_work is None:
+            raise RuntimeError("M8 demo stable mapping is unavailable")
+        current_vector_id = current_existing.indexing_work.vector_id
+        service.forget(
+            RequestContext(user_id="demo-user", request_id="m8-forget"),
+            ForgetRequest(memory_id=forgotten.memory_id),
+        )
+
+        damaged = FaissVectorIndex(
+            index_directory,
+            embedding_model=ALL_MPNET_BASE_V2_MODEL_ID,
+            vector_dimension=ALL_MPNET_BASE_V2_DIMENSION,
+        )
+        damaged.remove(vector_id=current_vector_id)
+        embedder = SentenceTransformerEmbedder(cache_directory=cache)
+        orphan_vector_id = 999
+        damaged.add(
+            vector_id=orphan_vector_id,
+            embedding=embedder.embed("unmapped orphan recovery vector"),
+        )
+
+        first = compose_recovered_memory_service(
+            repository=repository,
+            index_directory=index_directory,
+            embedding_model=ALL_MPNET_BASE_V2_MODEL_ID,
+            vector_dimension=ALL_MPNET_BASE_V2_DIMENSION,
+            embedder=embedder,
+            token_counter=TiktokenTokenCounter(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        current_result = first.service.retrieve(
+            RequestContext(user_id="demo-user", request_id="m8-retrieve"),
+            RetrievalRequest(
+                query=current_request.content,
+                limit=10,
+                token_budget=256,
+            ),
+        )
+        forgotten_result = first.service.retrieve(
+            RequestContext(user_id="demo-user", request_id="m8-history"),
+            RetrievalRequest(
+                query=forgotten_request.content,
+                limit=10,
+                token_budget=256,
+                intent=RetrievalIntent.HISTORICAL,
+            ),
+        )
+        with sqlite3.connect(database_path) as connection:
+            stable_mapping_after = connection.execute(
+                "SELECT vector_id FROM memory_vector_mappings WHERE memory_id = ?",
+                (current.memory_id,),
+            ).fetchone()
+            tombstone = connection.execute(
+                "SELECT deleted_at FROM memories WHERE memory_id = ?",
+                (forgotten.memory_id,),
+            ).fetchone()
+        index_before = (index_directory / "memory.faiss").read_bytes()
+        metadata_before = (index_directory / "memory.faiss.meta.json").read_bytes()
+
+        second = compose_recovered_memory_service(
+            repository=SQLiteMemoryRepository(database_path),
+            index_directory=index_directory,
+            embedding_model=ALL_MPNET_BASE_V2_MODEL_ID,
+            vector_dimension=ALL_MPNET_BASE_V2_DIMENSION,
+            embedder=SentenceTransformerEmbedder(cache_directory=cache),
+            token_counter=TiktokenTokenCounter(),
+            clock=_FixedClock(now),
+            memory_ids=_SequenceMemoryIds(),
+            relevance_threshold=0.50,
+        )
+        files_unchanged = (
+            (index_directory / "memory.faiss").read_bytes() == index_before
+            and (index_directory / "memory.faiss.meta.json").read_bytes()
+            == metadata_before
+        )
+        stable_mapping_preserved = stable_mapping_after == (current_vector_id,)
+        tombstoned_absent = (
+            tombstone is not None
+            and tombstone[0] is not None
+            and forgotten.memory_id not in forgotten_result.included_memory_ids
+        )
+        current_selected = current_result.included_memory_ids == (current.memory_id,)
+        if (
+            first.recovery.reason != "ready_rebuilt_generation"
+            or first.recovery.orphan_vectors_removed != 1
+            or not stable_mapping_preserved
+            or not tombstoned_absent
+            or not current_selected
+            or second.recovery.reason != "ready_existing_generation"
+            or not files_unchanged
+        ):
+            raise RuntimeError("M8 recovery demo verification failed")
+
+        output = {
+            "first_recovery": {
+                "readiness": first.recovery.readiness.value,
+                "reason": first.recovery.reason,
+                "rebuilt": first.recovery.rebuilt,
+                "vector_count": first.recovery.vector_count,
+                "orphan_vectors_removed": first.recovery.orphan_vectors_removed,
+            },
+            "stable_mapping": {
+                "memory_id": current.memory_id,
+                "vector_id": current_vector_id,
+                "preserved": stable_mapping_preserved,
+            },
+            "exclusions": {
+                "current_selected": current_selected,
+                "tombstoned_memory_id": forgotten.memory_id,
+                "tombstoned_absent": tombstoned_absent,
+            },
+            "second_startup": {
+                "readiness": second.recovery.readiness.value,
+                "reason": second.recovery.reason,
+                "rebuilt": second.recovery.rebuilt,
+                "durable_files_unchanged": files_unchanged,
+            },
+        }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -1164,6 +1359,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_expiration()
     if arguments.command == "demo-forgetting":
         return _demo_forgetting()
+    if arguments.command == "demo-recovery":
+        return _demo_recovery()
     return 0
 
 

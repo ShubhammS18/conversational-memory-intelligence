@@ -16,6 +16,7 @@ from .contracts import (
     PersistedPendingMemory,
     VectorSearchHit,
 )
+from .recovery import RecoveryInventory
 
 
 class IdempotencyPort(Protocol):
@@ -34,6 +35,14 @@ class EmbeddingPort(Protocol):
 
 class MemoryRepositoryPort(Protocol):
     """Persist and acknowledge authoritative owner-scoped memory state."""
+
+    def recovery_inventory(
+        self, *, embedding_model: str, vector_dimension: int
+    ) -> RecoveryInventory: ...
+
+    def adopt_forgetting_vector_id(
+        self, *, user_id: str, memory_id: str, vector_id: int
+    ) -> None: ...
 
     def persist_pending(
         self,

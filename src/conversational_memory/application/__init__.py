@@ -38,6 +38,15 @@ from .ports import (
     TokenCounterPort,
     VectorIndexPort,
 )
+from .recovery import (
+    RecoveryCleanup,
+    RecoveryCoordinator,
+    RecoveryInventory,
+    RecoveryPublication,
+    RecoveryReadiness,
+    RecoveryResult,
+    RecoveryVector,
+)
 from .service import MemoryService
 
 __all__ = [
@@ -62,6 +71,13 @@ __all__ = [
     "MemoryRepositoryPort",
     "MemoryService",
     "PersistedPendingMemory",
+    "RecoveryCleanup",
+    "RecoveryCoordinator",
+    "RecoveryInventory",
+    "RecoveryPublication",
+    "RecoveryReadiness",
+    "RecoveryResult",
+    "RecoveryVector",
     "RequestContext",
     "RetrievalIntent",
     "RetrievalOutcome",

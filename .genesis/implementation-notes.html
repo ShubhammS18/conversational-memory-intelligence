@@ -33,13 +33,13 @@
   <p class="sub"><b>Rolling source of truth for what is LIVE right now.</b> The wiki can lag; this file
      cannot. Read this on every session start to avoid rebuilding what exists. This is your
      <i>git-like restart point</i>: if context is lost, this file rehydrates you.
-     Last updated: <code>2026-09-09T07:48:07Z</code> · by loop: <code>M7-closure</code></p>
+     Last updated: <code>2026-09-10T09:38:35Z</code> · by loop: <code>M8-closure</code></p>
 
   <!-- ───────────── ONE-LINE STATUS ───────────── -->
   <div class="card live">
-    <b>Now in flight:</b> No implementation work; M1–M7 are complete and M8 has not started.<br>
-    <b>Active loop:</b> NOT_STARTED · <b>Current milestone:</b> M8 · <b>Phase:</b> G0 not started<br>
-    <b>Blocked on:</b> Separate explicit authorization to begin the M8 G0 existence preflight.
+    <b>Now in flight:</b> No implementation work; M1–M8 are complete and M9 has not started.<br>
+    <b>Active loop:</b> NOT_STARTED · <b>Current milestone:</b> M9 · <b>Phase:</b> G0 not started<br>
+    <b>Blocked on:</b> Separate explicit authorization to begin the M9 G0 existence preflight.
   </div>
 
   <!-- ───────────── WHAT'S LIVE ───────────── -->
@@ -55,6 +55,7 @@
         <tr><td>M5 historical retrieval</td><td><code>RetrievalIntent</code> · historical SQLite allowlist/hydration · <code>demo-history</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 119 locked, 4 architecture, and 283 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
         <tr><td>M6 trusted-clock expiration</td><td><code>domain/expiration.py</code> · atomic SQLite expiration · <code>demo-expiration</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 37 locked, 4 architecture, and 323 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
         <tr><td>M7 global idempotent forgetting</td><td><code>domain/forgetting.py</code> · SQLite tombstone/cleanup state · targeted FAISS removal · <code>demo-forgetting</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 212 locked, 4 architecture, and 390 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
+        <tr><td>M8 recovery and reconciliation</td><td><code>application/recovery.py</code> · SQLite authority audit · exact durable FAISS rebuild · <code>demo-recovery</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 95 locked, 4 architecture, and 457 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
       </tbody>
     </table>
     <p class="note">Append a row the moment a milestone passes L4 VERIFY. The grep in G0 checks against this table.</p>
@@ -72,6 +73,7 @@
       <li>M5 historical-retrieval binding and review evidence: <a href="decisions/M5-historical-retrieval-bindings.md"><code>M5-historical-retrieval-bindings</code></a> · <a href="checkpoints/M5.md"><code>checkpoints/M5.md</code></a>.</li>
       <li>M6 trusted-clock expiration binding and review evidence: <a href="decisions/M6-trusted-clock-expiration-bindings.md"><code>M6-trusted-clock-expiration-bindings</code></a> · <a href="checkpoints/M6.md"><code>checkpoints/M6.md</code></a>.</li>
       <li>M7 forgetting binding and review evidence: <a href="decisions/M7-forgetting-bindings.md"><code>M7-forgetting-bindings</code></a> · <a href="checkpoints/M7.md"><code>checkpoints/M7.md</code></a>.</li>
+      <li>M8 recovery binding and review evidence: <a href="decisions/M8-recovery-and-reconciliation-bindings.md"><code>M8-recovery-and-reconciliation-bindings</code></a> · <a href="checkpoints/M8.md"><code>checkpoints/M8.md</code></a>.</li>
       <li>High-risk infrastructure checkpoint and incident history: <a href="checkpoints/M1.md"><code>checkpoints/M1.md</code></a>; recovery scope and remaining limitation: <a href="../experiments/d4_engineering_reality/recovery_analysis.md"><code>recovery_analysis.md</code></a>. These links are evidence pointers, not replacements for the governing ADRs.</li>
     </ul>
   </div>
@@ -85,7 +87,7 @@
     <table>
       <thead><tr><th>Date</th><th>Milestone</th><th>Planned approach</th><th>Actual approach</th><th>Reason</th><th>Invariant impact</th></tr></thead>
       <tbody>
-        <tr><td colspan="6" style="color:var(--mut);font-style:italic">Historical verification incidents and limitations are preserved in the M1–M7 checkpoint records linked above.</td></tr>
+        <tr><td colspan="6" style="color:var(--mut);font-style:italic">Historical verification incidents and limitations are preserved in the M1–M8 checkpoint records linked above.</td></tr>
       </tbody>
     </table>
   </div>
@@ -94,8 +96,8 @@
   <h2>Known gaps &amp; the ordered Next list</h2>
   <div class="card">
     <ol>
-      <li>When separately authorized, begin M8 with its G0 existence preflight; no M8 work has started.</li>
-      <li>Keep recovery and reconciliation within M8's future approved binding; do not infer or begin it from the completed M1–M7 slices.</li>
+      <li>When separately authorized, begin M9 with its G0 existence preflight; no M9 work has started.</li>
+      <li>Keep privacy-safe observability within M9's future approved binding; do not infer or begin it from the completed M1–M8 slices.</li>
     </ol>
     <p class="note">Mirror of <code>checkpoints/CURRENT.md → next_action</code>, but human-readable and durable across compaction.</p>
   </div>
@@ -103,6 +105,7 @@
   <!-- ───────────── SESSION LOG (append-only) ───────────── -->
   <h2>Session log (append-only, newest first)</h2>
   <div class="card">
+    <p><code>2026-09-10T09:38:35Z</code> — M8 closed after fresh independent L4 APPROVE and a passed three-question human quiz; canonical state now targets not-started M9 pending separate G0 authorization.</p>
     <p><code>2026-09-09T07:48:07Z</code> — M7 closed after fresh independent L4 APPROVE and a passed three-question human quiz; canonical state now targets not-started M8 pending separate G0 authorization.</p>
     <p><code>2026-09-08T13:35:40Z</code> — M6 closed after fresh independent L4 APPROVE and a passed three-question human quiz; canonical state now targets not-started M7 pending separate G0 authorization.</p>
     <p><code>2026-09-07T14:03:10Z</code> — M5 closed after fresh independent L4 APPROVE and a passed three-question human quiz; canonical state now targets not-started M6 without beginning its preflight or implementation.</p>

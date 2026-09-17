@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TypeVar
 
 from conversational_memory.domain.admission import evaluate_credential_admission
 from conversational_memory.domain.context import (
@@ -56,23 +59,47 @@ from .contracts import (
 from .errors import (
     AuthorizationError,
     ConfigurationError,
+    ConfigurationMismatchError,
     IndexingError,
     StorageError,
     ValidationError,
+)
+from .events import (
+    EventName,
+    EventOutcome,
+    EventReasonCode,
+    EventStage,
+    HmacUserPseudonymizer,
+    MemoryEvent,
+    isolated_event,
+    privacy_safe_reason_code,
 )
 from .locking import PROCESS_WRITE_LOCK
 from .ports import (
     ClockPort,
     EmbeddingPort,
+    EventSinkPort,
     IdempotencyPort,
     MemoryIdPort,
     MemoryRepositoryPort,
+    TelemetryClockPort,
     TokenCounterPort,
     VectorIndexPort,
 )
 
 _M1_TOKENIZER = "cl100k_base"
 _MISSING_RELEVANCE_THRESHOLD = object()
+_ResultT = TypeVar("_ResultT")
+
+
+@dataclass(slots=True)
+class _AdmissionObservation:
+    retry_count: int = 0
+
+
+@dataclass(slots=True)
+class _RetrievalObservation:
+    candidate_count: int = 0
 
 
 class MemoryService:
@@ -89,6 +116,9 @@ class MemoryService:
         clock: ClockPort,
         memory_ids: MemoryIdPort,
         relevance_threshold: object = _MISSING_RELEVANCE_THRESHOLD,
+        event_sink: EventSinkPort | None = None,
+        telemetry_clock: TelemetryClockPort | None = None,
+        user_pseudonymizer: HmacUserPseudonymizer | None = None,
     ) -> None:
         self._idempotency = idempotency
         self._embedder = embedder
@@ -97,6 +127,14 @@ class MemoryService:
         self._token_counter = token_counter
         self._clock = clock
         self._memory_ids = memory_ids
+        observability_parts = (event_sink, telemetry_clock, user_pseudonymizer)
+        if any(part is not None for part in observability_parts) and not all(
+            part is not None for part in observability_parts
+        ):
+            raise ConfigurationError("invalid_observability_configuration")
+        self._event_sink = event_sink
+        self._telemetry_clock = telemetry_clock
+        self._user_pseudonymizer = user_pseudonymizer
         self._known_published_supersessions: set[tuple[str, str, int, str]] = set()
         try:
             self._relevance_threshold = validate_relevance_threshold(
@@ -107,17 +145,59 @@ class MemoryService:
 
     def admit(self, context: RequestContext, request: AdmissionRequest) -> AdmissionResult:
         """Admit one memory using trusted identity and the approved M1 ordering."""
+        started_at = self._event_start()
+        observation = _AdmissionObservation()
+        try:
+            result = self._admit(context, request, observation)
+        except Exception as error:
+            self._observe_configuration_error(context, error)
+            self._emit_admission_terminal(
+                context=context,
+                started_at=started_at,
+                observation=observation,
+                error=error,
+            )
+            raise
+        self._emit_admission_terminal(
+            context=context,
+            started_at=started_at,
+            observation=observation,
+            result=result,
+        )
+        return result
+
+    def _admit(
+        self,
+        context: RequestContext,
+        request: AdmissionRequest,
+        observation: _AdmissionObservation,
+    ) -> AdmissionResult:
         self._validate_context(context)
         fingerprint_input, idempotency_key, fingerprint = self._canonicalize(request)
 
         with PROCESS_WRITE_LOCK:
-            existing = self._idempotency.find(
-                user_id=context.user_id,
-                idempotency_key=idempotency_key,
+            existing = self._observe_storage(
+                context=context,
+                stage=EventStage.IDEMPOTENCY_LOOKUP,
+                operation=lambda: self._idempotency.find(
+                    user_id=context.user_id,
+                    idempotency_key=idempotency_key,
+                ),
             )
             if existing is not None:
                 if existing.request_fingerprint != fingerprint:
                     raise ValidationError("idempotency_key_conflict")
+                observation.retry_count = 1
+                retry_started = self._event_start()
+                self._emit_event(
+                    started_at=retry_started,
+                    event_name=EventName.ADMISSION_RETRY,
+                    outcome=EventOutcome.RETRY_STARTED,
+                    reason_code=EventReasonCode.RETRY_STARTED,
+                    context=context,
+                    memory_id=existing.result.memory_id,
+                    retry_count=1,
+                )
                 if existing.result.indexing_state is IndexingState.INDEXED:
                     return existing.result
                 return self._retry_indexing(
@@ -141,9 +221,13 @@ class MemoryService:
             if target_memory_id is not None:
                 created_at = self._clock.now()
                 memory = self._new_memory(context, request, content, created_at)
-                target = self._repository.find_supersession_target(
-                    user_id=context.user_id,
-                    memory_id=target_memory_id,
+                target = self._observe_storage(
+                    context=context,
+                    stage=EventStage.SUPERSESSION_LOOKUP,
+                    operation=lambda: self._repository.find_supersession_target(
+                        user_id=context.user_id,
+                        memory_id=target_memory_id,
+                    ),
                 )
                 if target is None:
                     raise ValidationError("invalid_supersession_target")
@@ -158,16 +242,30 @@ class MemoryService:
                     )
                 except ValueError as error:
                     raise ValidationError("invalid_supersession_target") from error
-                embedding = self._embedder.embed(content)
+                embedding = self._observe_indexing(
+                    context=context,
+                    stage=EventStage.EMBEDDING,
+                    memory_id=memory.memory_id,
+                    operation=lambda: self._embedder.embed(content),
+                )
             else:
-                embedding = self._embedder.embed(content)
+                embedding = self._observe_indexing(
+                    context=context,
+                    stage=EventStage.EMBEDDING,
+                    operation=lambda: self._embedder.embed(content),
+                )
                 created_at = self._clock.now()
                 memory = self._new_memory(context, request, content, created_at)
-            persisted = self._repository.persist_pending(
-                memory=memory,
-                embedding=embedding,
-                idempotency_key=idempotency_key,
-                request_fingerprint=fingerprint,
+            persisted = self._observe_storage(
+                context=context,
+                stage=EventStage.PERSIST_PENDING,
+                memory_id=memory.memory_id,
+                operation=lambda: self._repository.persist_pending(
+                    memory=memory,
+                    embedding=embedding,
+                    idempotency_key=idempotency_key,
+                    request_fingerprint=fingerprint,
+                ),
             )
 
             return self._index_and_acknowledge(
@@ -184,6 +282,35 @@ class MemoryService:
         request: RetrievalRequest,
     ) -> RetrievalResult:
         """Retrieve only owner-authorized indexed memories through a scoped FAISS search."""
+        started_at = self._event_start()
+        observation = _RetrievalObservation()
+        try:
+            result = self._retrieve(context, request, observation)
+        except Exception as error:
+            self._observe_configuration_error(context, error)
+            self._emit_retrieval_terminal(
+                context=context,
+                request=request,
+                started_at=started_at,
+                observation=observation,
+                error=error,
+            )
+            raise
+        self._emit_retrieval_terminal(
+            context=context,
+            request=request,
+            started_at=started_at,
+            observation=observation,
+            result=result,
+        )
+        return result
+
+    def _retrieve(
+        self,
+        context: RequestContext,
+        request: RetrievalRequest,
+        observation: _RetrievalObservation,
+    ) -> RetrievalResult:
         self._validate_context(context)
         query, limit, token_budget = self._validate_retrieval_request(request)
         if self._token_counter.tokenizer_id != _M1_TOKENIZER:
@@ -194,17 +321,29 @@ class MemoryService:
                 now = validate_trusted_utc(self._clock.now())
             except ValueError as error:
                 raise ConfigurationError("invalid_trusted_clock") from error
-            self._repository.expire_current_memories(
-                user_id=context.user_id,
-                now=now,
+            self._observe_storage(
+                context=context,
+                stage=EventStage.EXPIRATION_TRANSITION,
+                operation=lambda: self._repository.expire_current_memories(
+                    user_id=context.user_id,
+                    now=now,
+                ),
             )
-            allowed_vector_ids = self._repository.current_state_vector_ids(
-                user_id=context.user_id,
-                now=now,
+            allowed_vector_ids = self._observe_storage(
+                context=context,
+                stage=EventStage.CURRENT_ALLOWLIST,
+                operation=lambda: self._repository.current_state_vector_ids(
+                    user_id=context.user_id,
+                    now=now,
+                ),
             )
         else:
-            allowed_vector_ids = self._repository.historical_vector_ids(
-                user_id=context.user_id,
+            allowed_vector_ids = self._observe_storage(
+                context=context,
+                stage=EventStage.HISTORICAL_ALLOWLIST,
+                operation=lambda: self._repository.historical_vector_ids(
+                    user_id=context.user_id,
+                ),
             )
         if not allowed_vector_ids:
             return RetrievalResult(
@@ -218,12 +357,21 @@ class MemoryService:
                 outcome=RetrievalOutcome.NO_ELIGIBLE_MEMORY,
             )
 
-        query_embedding = self._embedder.embed(query)
-        hits = self._vector_index.search(
-            embedding=query_embedding,
-            allowed_vector_ids=allowed_vector_ids,
-            limit=limit,
+        query_embedding = self._observe_indexing(
+            context=context,
+            stage=EventStage.EMBEDDING,
+            operation=lambda: self._embedder.embed(query),
         )
+        hits = self._observe_indexing(
+            context=context,
+            stage=EventStage.VECTOR_SEARCH,
+            operation=lambda: self._vector_index.search(
+                embedding=query_embedding,
+                allowed_vector_ids=allowed_vector_ids,
+                limit=limit,
+            ),
+        )
+        observation.candidate_count = len(hits)
         allowed = set(allowed_vector_ids)
         if any(hit.vector_id not in allowed for hit in hits):
             raise AuthorizationError("unauthorized_retrieval_result")
@@ -232,15 +380,23 @@ class MemoryService:
         if request.intent is RetrievalIntent.CURRENT:
             if now is None:
                 raise AuthorizationError("unauthorized_retrieval_result")
-            hydrated = self._repository.hydrate_current_state(
-                user_id=context.user_id,
-                vector_ids=hit_vector_ids,
-                now=now,
+            hydrated = self._observe_storage(
+                context=context,
+                stage=EventStage.CURRENT_HYDRATION,
+                operation=lambda: self._repository.hydrate_current_state(
+                    user_id=context.user_id,
+                    vector_ids=hit_vector_ids,
+                    now=now,
+                ),
             )
         else:
-            hydrated = self._repository.hydrate_historical(
-                user_id=context.user_id,
-                vector_ids=hit_vector_ids,
+            hydrated = self._observe_storage(
+                context=context,
+                stage=EventStage.HISTORICAL_HYDRATION,
+                operation=lambda: self._repository.hydrate_historical(
+                    user_id=context.user_id,
+                    vector_ids=hit_vector_ids,
+                ),
             )
         memories_by_vector_id = {item.vector_id: item.memory for item in hydrated}
         if len(memories_by_vector_id) != len(hits):
@@ -328,11 +484,38 @@ class MemoryService:
         request: ForgetRequest,
     ) -> ForgetResult:
         """Logically forget one owned memory before attempting physical cleanup."""
+        started_at = self._event_start()
+        try:
+            result = self._forget(context, request)
+        except Exception as error:
+            self._observe_configuration_error(context, error)
+            self._emit_forgetting_terminal(
+                context=context,
+                started_at=started_at,
+                error=error,
+            )
+            raise
+        self._emit_forgetting_terminal(
+            context=context,
+            started_at=started_at,
+            result=result,
+        )
+        return result
+
+    def _forget(
+        self,
+        context: RequestContext,
+        request: ForgetRequest,
+    ) -> ForgetResult:
         self._validate_context(context)
         with PROCESS_WRITE_LOCK:
-            target = self._repository.find_forgetting_target(
-                user_id=context.user_id,
-                memory_id=request.memory_id,
+            target = self._observe_storage(
+                context=context,
+                stage=EventStage.FORGETTING_LOOKUP,
+                operation=lambda: self._repository.find_forgetting_target(
+                    user_id=context.user_id,
+                    memory_id=request.memory_id,
+                ),
             )
             if target is None:
                 return ForgetResult(
@@ -353,10 +536,15 @@ class MemoryService:
                     requested_at = validate_trusted_utc(self._clock.now())
                 except ValueError as error:
                     raise ConfigurationError("invalid_trusted_clock") from error
-                state = self._repository.begin_forgetting(
-                    user_id=context.user_id,
-                    memory_id=request.memory_id,
-                    requested_at=requested_at,
+                state = self._observe_storage(
+                    context=context,
+                    stage=EventStage.BEGIN_FORGETTING,
+                    memory_id=target.memory.memory_id,
+                    operation=lambda: self._repository.begin_forgetting(
+                        user_id=context.user_id,
+                        memory_id=request.memory_id,
+                        requested_at=requested_at,
+                    ),
                 )
                 if state is None:
                     return ForgetResult(
@@ -369,14 +557,20 @@ class MemoryService:
                         retryable=False,
                     )
 
-            if state.vector_id is None:
+            vector_id = state.vector_id
+            if vector_id is None:
                 return self._forget_result(
                     state,
                     reason="physical_cleanup_identity_pending",
                 )
 
             try:
-                self._vector_index.remove(vector_id=state.vector_id)
+                self._observe_indexing(
+                    context=context,
+                    stage=EventStage.VECTOR_REMOVE,
+                    memory_id=state.memory_id,
+                    operation=lambda: self._vector_index.remove(vector_id=vector_id),
+                )
             except IndexingError:
                 return self._forget_result(state, reason="physical_cleanup_pending")
 
@@ -385,11 +579,16 @@ class MemoryService:
             except ValueError as error:
                 raise ConfigurationError("invalid_trusted_clock") from error
             try:
-                completed = self._repository.acknowledge_forgetting_complete(
-                    user_id=context.user_id,
-                    memory_id=request.memory_id,
-                    vector_id=state.vector_id,
-                    completed_at=completed_at,
+                completed = self._observe_storage(
+                    context=context,
+                    stage=EventStage.ACKNOWLEDGE_FORGETTING,
+                    memory_id=state.memory_id,
+                    operation=lambda: self._repository.acknowledge_forgetting_complete(
+                        user_id=context.user_id,
+                        memory_id=request.memory_id,
+                        vector_id=vector_id,
+                        completed_at=completed_at,
+                    ),
                 )
             except StorageError:
                 return self._forget_result(state, reason="physical_cleanup_pending")
@@ -423,9 +622,14 @@ class MemoryService:
         if work is None or existing.result.memory_id != work.memory_id:
             raise StorageError("Stored indexing work is unavailable")
         if existing.result.indexing_state is IndexingState.FAILED:
-            self._repository.mark_pending(
-                user_id=context.user_id,
+            self._observe_storage(
+                context=context,
+                stage=EventStage.MARK_PENDING,
                 memory_id=work.memory_id,
+                operation=lambda: self._repository.mark_pending(
+                    user_id=context.user_id,
+                    memory_id=work.memory_id,
+                ),
             )
         elif existing.result.indexing_state is not IndexingState.PENDING:
             raise StorageError("Stored indexing state cannot be retried")
@@ -461,7 +665,15 @@ class MemoryService:
         supersedes_memory_id: str | None = None,
     ) -> AdmissionResult:
         try:
-            self._vector_index.add(vector_id=vector_id, embedding=embedding)
+            self._observe_indexing(
+                context=context,
+                stage=EventStage.VECTOR_ADD,
+                memory_id=memory_id,
+                operation=lambda: self._vector_index.add(
+                    vector_id=vector_id,
+                    embedding=embedding,
+                ),
+            )
         except IndexingError as error:
             indexing_state = self._record_indexing_failure(context, memory_id, error)
             return AdmissionResult(
@@ -489,9 +701,14 @@ class MemoryService:
             )
 
         try:
-            self._repository.mark_indexed(
-                user_id=context.user_id,
+            self._observe_storage(
+                context=context,
+                stage=EventStage.MARK_INDEXED,
                 memory_id=memory_id,
+                operation=lambda: self._repository.mark_indexed(
+                    user_id=context.user_id,
+                    memory_id=memory_id,
+                ),
             )
         except StorageError as error:
             return AdmissionResult(
@@ -526,10 +743,15 @@ class MemoryService:
             supersedes_memory_id,
         )
         try:
-            self._repository.acknowledge_supersession(
-                user_id=context.user_id,
-                replacement_memory_id=memory_id,
-                target_memory_id=supersedes_memory_id,
+            self._observe_storage(
+                context=context,
+                stage=EventStage.ACKNOWLEDGE_SUPERSESSION,
+                memory_id=memory_id,
+                operation=lambda: self._repository.acknowledge_supersession(
+                    user_id=context.user_id,
+                    replacement_memory_id=memory_id,
+                    target_memory_id=supersedes_memory_id,
+                ),
             )
         except StorageError as error:
             return AdmissionResult(
@@ -550,6 +772,296 @@ class MemoryService:
             retrievable=True,
             supersedes_memory_ids=(supersedes_memory_id,),
         )
+
+    def _observe_storage(
+        self,
+        *,
+        context: RequestContext,
+        stage: EventStage,
+        operation: Callable[[], _ResultT],
+        memory_id: str | None = None,
+    ) -> _ResultT:
+        started_at = self._event_start()
+        try:
+            result = operation()
+        except Exception:
+            self._emit_event(
+                started_at=started_at,
+                event_name=EventName.STORAGE_FAILED,
+                outcome=EventOutcome.FAILED,
+                reason_code=EventReasonCode.STORAGE_FAILURE,
+                context=context,
+                memory_id=memory_id,
+                stage=stage,
+            )
+            raise
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.STORAGE_COMPLETED,
+            outcome=EventOutcome.SUCCEEDED,
+            reason_code=EventReasonCode.OPERATION_COMPLETED,
+            context=context,
+            memory_id=memory_id,
+            stage=stage,
+        )
+        return result
+
+    def _observe_indexing(
+        self,
+        *,
+        context: RequestContext,
+        stage: EventStage,
+        operation: Callable[[], _ResultT],
+        memory_id: str | None = None,
+    ) -> _ResultT:
+        started_at = self._event_start()
+        try:
+            result = operation()
+        except Exception:
+            self._emit_event(
+                started_at=started_at,
+                event_name=EventName.INDEXING_FAILED,
+                outcome=EventOutcome.FAILED,
+                reason_code=EventReasonCode.INDEXING_FAILED,
+                context=context,
+                memory_id=memory_id,
+                stage=stage,
+            )
+            raise
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.INDEXING_COMPLETED,
+            outcome=EventOutcome.SUCCEEDED,
+            reason_code=EventReasonCode.OPERATION_COMPLETED,
+            context=context,
+            memory_id=memory_id,
+            stage=stage,
+        )
+        return result
+
+    @isolated_event
+    def _observe_configuration_error(self, context: RequestContext, error: Exception) -> None:
+        if isinstance(error, (ConfigurationError, ConfigurationMismatchError)) or (
+            isinstance(error, ValidationError) and error.reason == "invalid_tokenizer_configuration"
+        ):
+            self._emit_configuration_failure(context)
+
+    def _emit_configuration_failure(self, context: RequestContext) -> None:
+        started_at = self._event_start()
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.CONFIGURATION_FAILED,
+            outcome=EventOutcome.FAILED,
+            reason_code=EventReasonCode.CONFIGURATION_MISMATCH,
+            context=context,
+        )
+
+    @isolated_event
+    def _emit_admission_terminal(
+        self,
+        *,
+        context: RequestContext,
+        started_at: int | None,
+        observation: _AdmissionObservation,
+        result: AdmissionResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        if result is not None:
+            outcome = (
+                EventOutcome.ACCEPTED
+                if result.decision is AdmissionDecision.ACCEPTED
+                else EventOutcome.REJECTED
+            )
+            reason_code = privacy_safe_reason_code(
+                result.reason,
+                fallback=EventReasonCode.OPERATION_FAILED,
+            )
+            memory_id = result.memory_id
+        else:
+            assert error is not None
+            outcome = EventOutcome.FAILED
+            reason_code = self._application_error_reason(error, admission=True)
+            memory_id = None
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.ADMISSION_COMPLETED,
+            outcome=outcome,
+            reason_code=reason_code,
+            context=context,
+            memory_id=memory_id,
+            retry_count=observation.retry_count,
+        )
+
+    @isolated_event
+    def _emit_retrieval_terminal(
+        self,
+        *,
+        context: RequestContext,
+        request: RetrievalRequest,
+        started_at: int | None,
+        observation: _RetrievalObservation,
+        result: RetrievalResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        if result is not None:
+            outcome = EventOutcome(result.outcome.value)
+            reason_code = EventReasonCode(result.outcome.value)
+            returned_count = len(result.memories)
+            memory_ids = result.included_memory_ids
+            tokens_used = result.tokens_used
+        else:
+            assert error is not None
+            outcome = EventOutcome.FAILED
+            reason_code = self._application_error_reason(error)
+            returned_count = 0
+            memory_ids = ()
+            tokens_used = 0
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.RETRIEVAL_COMPLETED,
+            outcome=outcome,
+            reason_code=reason_code,
+            context=context,
+            memory_ids=memory_ids,
+            candidate_count=observation.candidate_count,
+            returned_count=returned_count,
+            token_budget=request.token_budget,
+            tokens_used=tokens_used,
+        )
+
+    @isolated_event
+    def _emit_forgetting_terminal(
+        self,
+        *,
+        context: RequestContext,
+        started_at: int | None,
+        result: ForgetResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        if result is not None:
+            outcome = EventOutcome(result.outcome.value)
+            reason_code = privacy_safe_reason_code(
+                result.reason,
+                fallback=EventReasonCode.OPERATION_FAILED,
+            )
+            memory_id = result.memory_id
+        else:
+            assert error is not None
+            outcome = EventOutcome.FAILED
+            if isinstance(error, (ConfigurationError, ConfigurationMismatchError)):
+                reason_code = EventReasonCode.CONFIGURATION_MISMATCH
+            elif isinstance(error, StorageError):
+                reason_code = EventReasonCode.STORAGE_FAILURE
+            elif isinstance(error, IndexingError):
+                reason_code = EventReasonCode.INDEXING_FAILED
+            else:
+                reason_code = EventReasonCode.OPERATION_FAILED
+            memory_id = None
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.FORGETTING_COMPLETED,
+            outcome=outcome,
+            reason_code=reason_code,
+            context=context,
+            memory_id=memory_id,
+        )
+
+    @staticmethod
+    def _application_error_reason(error: Exception, *, admission: bool = False) -> EventReasonCode:
+        if isinstance(error, (ConfigurationError, ConfigurationMismatchError)):
+            return EventReasonCode.CONFIGURATION_MISMATCH
+        if isinstance(error, StorageError):
+            return EventReasonCode.STORAGE_FAILURE
+        if isinstance(error, IndexingError):
+            return EventReasonCode.INDEXING_FAILED
+        if isinstance(error, ValidationError):
+            if not admission:
+                return (EventReasonCode.CONFIGURATION_MISMATCH
+                    if error.reason == "invalid_tokenizer_configuration"
+                    else EventReasonCode.OPERATION_FAILED)
+            return privacy_safe_reason_code(
+                error.reason,
+                fallback=(
+                    EventReasonCode.CONFIGURATION_MISMATCH
+                    if "configuration" in error.reason
+                    else EventReasonCode.INVALID_ADMISSION_REQUEST
+                ),
+            )
+        return EventReasonCode.OPERATION_FAILED
+
+    def _event_start(self) -> int | None:
+        if self._telemetry_clock is None:
+            return None
+        try:
+            started_at = self._telemetry_clock.monotonic_ns()
+            if (
+                isinstance(started_at, bool)
+                or not isinstance(started_at, int)
+                or started_at < 0
+            ):
+                return None
+            return started_at
+        except Exception:  # noqa: BLE001 - observability must not affect primary work
+            return None
+
+    def _emit_event(
+        self,
+        *,
+        started_at: int | None,
+        event_name: EventName,
+        outcome: EventOutcome,
+        reason_code: EventReasonCode,
+        context: RequestContext | None = None,
+        memory_id: str | None = None,
+        memory_ids: tuple[str, ...] | None = None,
+        stage: EventStage | None = None,
+        retry_count: int | None = None,
+        candidate_count: int | None = None,
+        returned_count: int | None = None,
+        token_budget: int | None = None,
+        tokens_used: int | None = None,
+    ) -> None:
+        if (
+            started_at is None
+            or self._event_sink is None
+            or self._telemetry_clock is None
+            or self._user_pseudonymizer is None
+        ):
+            return
+        try:
+            ended_at = self._telemetry_clock.monotonic_ns()
+            if (
+                isinstance(ended_at, bool)
+                or not isinstance(ended_at, int)
+                or ended_at < 0
+                or ended_at < started_at
+            ):
+                return
+            event = MemoryEvent(
+                schema_version=1,
+                event_name=event_name,
+                occurred_at=self._telemetry_clock.utc_now(),
+                duration_ms=(ended_at - started_at) // 1_000_000,
+                outcome=outcome,
+                reason_code=reason_code,
+                request_id=None if context is None else context.request_id,
+                user_ref=(
+                    None
+                    if context is None
+                    else self._user_pseudonymizer.pseudonymize(context.user_id)
+                ),
+                memory_id=memory_id,
+                memory_ids=memory_ids,
+                stage=stage,
+                retry_count=retry_count,
+                candidate_count=candidate_count,
+                returned_count=returned_count,
+                token_budget=token_budget,
+                tokens_used=tokens_used,
+            )
+            self._event_sink.emit(event)
+        except Exception:  # noqa: BLE001 - bound sink-failure isolation
+            return
 
     @staticmethod
     def _validate_context(context: RequestContext) -> None:
@@ -656,10 +1168,15 @@ class MemoryService:
         error: IndexingError,
     ) -> IndexingState:
         try:
-            self._repository.mark_failed(
-                user_id=context.user_id,
+            self._observe_storage(
+                context=context,
+                stage=EventStage.MARK_FAILED,
                 memory_id=memory_id,
-                reason=str(error),
+                operation=lambda: self._repository.mark_failed(
+                    user_id=context.user_id,
+                    memory_id=memory_id,
+                    reason=str(error),
+                ),
             )
         except StorageError:
             return IndexingState.PENDING

@@ -316,3 +316,4 @@ Total planned milestone token budget: 500000.
 - M6 completed on 2026-09-08 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification.
 - M7 completed on 2026-09-09 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M8 remains unstarted pending separate G0 authorization.
 - M8 completed on 2026-09-10 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M9 remains unstarted pending separate G0 authorization.
+- M9 completed on 2026-09-17 after fresh independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification: 221 locked, 4 architecture, and 666 full offline tests passed; real demo and quality/context/diff checks passed. M10 is next but explicitly unstarted pending separate G0 authorization.

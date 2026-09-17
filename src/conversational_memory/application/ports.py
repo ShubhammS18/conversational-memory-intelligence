@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from conversational_memory.domain.models import MemoryRecord
 
@@ -16,6 +16,7 @@ from .contracts import (
     PersistedPendingMemory,
     VectorSearchHit,
 )
+from .events import MemoryEvent
 from .recovery import RecoveryInventory
 
 
@@ -146,6 +147,21 @@ class ClockPort(Protocol):
     """Provide trusted lifecycle time."""
 
     def now(self) -> datetime: ...
+
+
+@runtime_checkable
+class EventSinkPort(Protocol):
+    """Accept one validated privacy-safe event."""
+
+    def emit(self, event: MemoryEvent) -> None: ...
+
+
+class TelemetryClockPort(Protocol):
+    """Provide wall and monotonic time without affecting lifecycle decisions."""
+
+    def utc_now(self) -> datetime: ...
+
+    def monotonic_ns(self) -> int: ...
 
 
 class MemoryIdPort(Protocol):

@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol
+from functools import partial
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from conversational_memory.domain.expiration import validate_trusted_utc
 
 from .contracts import Embedding
-from .errors import ConfigurationError, IndexingError, StorageError
+from .errors import ConfigurationError, ConfigurationMismatchError, IndexingError, StorageError
+from .events import (
+    EventName,
+    EventOutcome,
+    EventReasonCode,
+    EventStage,
+    HmacUserPseudonymizer,
+    MemoryEvent,
+    ObservabilityReadiness,
+    isolated_event,
+    privacy_safe_reason_code,
+)
 from .locking import PROCESS_WRITE_LOCK
+
+if TYPE_CHECKING:
+    from .ports import EventSinkPort, TelemetryClockPort
+
+_ResultT = TypeVar("_ResultT")
 
 
 class RecoveryReadiness(StrEnum):
@@ -152,23 +170,83 @@ class RecoveryCoordinator:
         embedding_model: str,
         vector_dimension: int,
         clock: RecoveryClockPort,
+        event_sink: EventSinkPort | None = None,
+        telemetry_clock: TelemetryClockPort | None = None,
+        user_pseudonymizer: HmacUserPseudonymizer | None = None,
     ) -> None:
+        observability_parts = (event_sink, telemetry_clock, user_pseudonymizer)
+        if any(part is None for part in observability_parts) and any(
+            part is not None for part in observability_parts
+        ):
+            raise ConfigurationError("invalid_observability_configuration")
         self._inventory = inventory
         self._vector_index = vector_index
         self._embedding_model = embedding_model
         self._vector_dimension = vector_dimension
         self._clock = clock
+        self._event_sink = event_sink
+        self._telemetry_clock = telemetry_clock
+        self._user_pseudonymizer = user_pseudonymizer
 
     def recover(self) -> RecoveryResult:
+        started_at = self._event_start()
+        try:
+            result = self._recover()
+        except Exception as error:
+            self._emit_failure(started_at, error)
+            raise
+        self._emit_terminal(started_at, result)
+        return result
+
+    @isolated_event
+    def _emit_failure(self, started_at: int | None, error: Exception) -> None:
+        reason = (
+            "unavailable_embedding_configuration"
+            if isinstance(error, (ConfigurationError, ConfigurationMismatchError))
+            else "unavailable_rebuild"
+        )
+        self._emit_terminal(started_at, RecoveryResult(
+            RecoveryReadiness.UNAVAILABLE, reason, False, 0, 0, 0, 0, 0,
+        ))
+
+    @isolated_event
+    def _emit_terminal(self, started_at: int | None, result: RecoveryResult) -> None:
+        if result.reason == "unavailable_embedding_configuration":
+            self._emit_event(
+                started_at=self._event_start(),
+                event_name=EventName.CONFIGURATION_FAILED,
+                outcome=EventOutcome.FAILED,
+                reason_code=EventReasonCode.CONFIGURATION_MISMATCH,
+            )
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.RECOVERY_COMPLETED,
+            outcome=EventOutcome(result.readiness.value),
+            reason_code=privacy_safe_reason_code(result.reason, fallback=EventReasonCode.UNAVAILABLE_REBUILD),
+            readiness=ObservabilityReadiness(result.readiness.value),
+            index_vector_count=result.vector_count,
+            embedding_model=self._embedding_model,
+            vector_dimension=self._vector_dimension,
+            rebuilt=result.rebuilt,
+            orphan_vectors_removed=result.orphan_vectors_removed,
+            pending_count=result.pending_count,
+            failed_count=result.failed_count,
+            cleanup_pending_count=result.cleanup_pending_count,
+        )
+
+    def _recover(self) -> RecoveryResult:
         with PROCESS_WRITE_LOCK:
-            inventory = self._inventory.recovery_inventory(
-                embedding_model=self._embedding_model,
-                vector_dimension=self._vector_dimension,
+            inventory = self._observe_storage(
+                stage=EventStage.RECOVERY_INVENTORY,
+                operation=lambda: self._inventory.recovery_inventory(
+                    embedding_model=self._embedding_model,
+                    vector_dimension=self._vector_dimension,
+                ),
             )
             if inventory.readiness is RecoveryReadiness.UNAVAILABLE:
                 return _result_without_publication(inventory)
             try:
-                publication = self._vector_index.reconcile(inventory)
+                publication = self._observe_reconciliation(inventory)
             except RecoveryIndexError as error:
                 return _failed_publication(inventory, error.reason)
             except IndexingError:
@@ -177,14 +255,17 @@ class RecoveryCoordinator:
             if inventory.cleanup_items:
                 cleanup_complete = self._complete_forgetting(inventory.cleanup_items)
             if publication.rebuilt or inventory.cleanup_items:
-                inventory = self._inventory.recovery_inventory(
-                    embedding_model=self._embedding_model,
-                    vector_dimension=self._vector_dimension,
+                inventory = self._observe_storage(
+                    stage=EventStage.RECOVERY_INVENTORY,
+                    operation=lambda: self._inventory.recovery_inventory(
+                        embedding_model=self._embedding_model,
+                        vector_dimension=self._vector_dimension,
+                    ),
                 )
                 if inventory.readiness is RecoveryReadiness.UNAVAILABLE:
                     return _result_without_publication(inventory)
                 try:
-                    verified = self._vector_index.reconcile(inventory)
+                    verified = self._observe_reconciliation(inventory)
                 except RecoveryIndexError as error:
                     return _failed_publication(inventory, error.reason)
                 except IndexingError:
@@ -235,21 +316,175 @@ class RecoveryCoordinator:
                 continue
             try:
                 if item.stored_vector_id is None:
-                    self._inventory.adopt_forgetting_vector_id(
+                    self._observe_storage(
+                        stage=EventStage.ADOPT_FORGETTING_VECTOR,
+                        memory_id=item.memory_id,
+                        operation=partial(
+                            self._inventory.adopt_forgetting_vector_id,
+                            user_id=item.user_id,
+                            memory_id=item.memory_id,
+                            vector_id=vector_id,
+                        ),
+                    )
+                completed_at = validate_trusted_utc(self._clock.now())
+                self._observe_storage(
+                    stage=EventStage.ACKNOWLEDGE_FORGETTING,
+                    memory_id=item.memory_id,
+                    operation=partial(
+                        self._inventory.acknowledge_forgetting_complete,
                         user_id=item.user_id,
                         memory_id=item.memory_id,
                         vector_id=vector_id,
-                    )
-                completed_at = validate_trusted_utc(self._clock.now())
-                self._inventory.acknowledge_forgetting_complete(
-                    user_id=item.user_id,
-                    memory_id=item.memory_id,
-                    vector_id=vector_id,
-                    completed_at=completed_at,
+                        completed_at=completed_at,
+                    ),
                 )
-            except (ConfigurationError, StorageError, ValueError):
+            except ConfigurationError:
+                self._emit_cleanup_configuration_failure()
+                return False
+            except (StorageError, ValueError):
                 return False
         return True
+
+    @isolated_event
+    def _emit_cleanup_configuration_failure(self) -> None:
+        self._emit_event(
+            started_at=self._event_start(),
+            event_name=EventName.CONFIGURATION_FAILED,
+            outcome=EventOutcome.FAILED,
+            reason_code=EventReasonCode.CONFIGURATION_MISMATCH,
+        )
+
+    def _observe_reconciliation(
+        self, inventory: RecoveryInventory
+    ) -> RecoveryPublication:
+        started_at = self._event_start()
+        try:
+            publication = self._vector_index.reconcile(inventory)
+        except Exception:
+            self._emit_event(
+                started_at=started_at,
+                event_name=EventName.INDEXING_FAILED,
+                outcome=EventOutcome.FAILED,
+                reason_code=EventReasonCode.INDEXING_FAILED,
+                stage=EventStage.GENERATION_RECONCILE,
+                embedding_model=self._embedding_model,
+                vector_dimension=self._vector_dimension,
+            )
+            raise
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.INDEXING_COMPLETED,
+            outcome=EventOutcome.SUCCEEDED,
+            reason_code=EventReasonCode.OPERATION_COMPLETED,
+            stage=EventStage.GENERATION_RECONCILE,
+            index_vector_count=publication.vector_count,
+            embedding_model=self._embedding_model,
+            vector_dimension=self._vector_dimension,
+        )
+        return publication
+
+    def _observe_storage(
+        self,
+        *,
+        stage: EventStage,
+        operation: Callable[[], _ResultT],
+        memory_id: str | None = None,
+    ) -> _ResultT:
+        started_at = self._event_start()
+        try:
+            result = operation()
+        except Exception:
+            self._emit_event(
+                started_at=started_at,
+                event_name=EventName.STORAGE_FAILED,
+                outcome=EventOutcome.FAILED,
+                reason_code=EventReasonCode.STORAGE_FAILURE,
+                stage=stage,
+                memory_id=memory_id,
+            )
+            raise
+        self._emit_event(
+            started_at=started_at,
+            event_name=EventName.STORAGE_COMPLETED,
+            outcome=EventOutcome.SUCCEEDED,
+            reason_code=EventReasonCode.OPERATION_COMPLETED,
+            stage=stage,
+            memory_id=memory_id,
+        )
+        return result
+
+    def _event_start(self) -> int | None:
+        if self._telemetry_clock is None:
+            return None
+        try:
+            started_at = self._telemetry_clock.monotonic_ns()
+            if (
+                isinstance(started_at, bool)
+                or not isinstance(started_at, int)
+                or started_at < 0
+            ):
+                return None
+            return started_at
+        except Exception:  # noqa: BLE001 - observability must not affect recovery
+            return None
+
+    def _emit_event(
+        self,
+        *,
+        started_at: int | None,
+        event_name: EventName,
+        outcome: EventOutcome,
+        reason_code: EventReasonCode,
+        stage: EventStage | None = None,
+        memory_id: str | None = None,
+        index_vector_count: int | None = None,
+        embedding_model: str | None = None,
+        vector_dimension: int | None = None,
+        readiness: ObservabilityReadiness | None = None,
+        rebuilt: bool | None = None,
+        orphan_vectors_removed: int | None = None,
+        pending_count: int | None = None,
+        failed_count: int | None = None,
+        cleanup_pending_count: int | None = None,
+    ) -> None:
+        if (
+            started_at is None
+            or self._event_sink is None
+            or self._telemetry_clock is None
+            or self._user_pseudonymizer is None
+        ):
+            return
+        try:
+            ended_at = self._telemetry_clock.monotonic_ns()
+            if (
+                isinstance(ended_at, bool)
+                or not isinstance(ended_at, int)
+                or ended_at < 0
+                or ended_at < started_at
+            ):
+                return
+            event = MemoryEvent(
+                schema_version=1,
+                event_name=event_name,
+                occurred_at=self._telemetry_clock.utc_now(),
+                duration_ms=(ended_at - started_at) // 1_000_000,
+                outcome=outcome,
+                reason_code=reason_code,
+                stage=stage,
+                memory_id=memory_id,
+                index_vector_count=index_vector_count,
+                embedding_model=embedding_model,
+                vector_dimension=vector_dimension,
+                readiness=readiness,
+                rebuilt=rebuilt,
+                orphan_vectors_removed=orphan_vectors_removed,
+                pending_count=pending_count,
+                failed_count=failed_count,
+                cleanup_pending_count=cleanup_pending_count,
+            )
+            self._event_sink.emit(event)
+        except Exception:  # noqa: BLE001 - bound sink-failure isolation
+            return
 
 
 def _result_without_publication(inventory: RecoveryInventory) -> RecoveryResult:

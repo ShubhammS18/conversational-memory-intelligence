@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
         "demo-recovery",
         help="Run the real M8 SQLite-authoritative recovery demonstration",
     )
+    subcommands.add_parser(
+        "demo-observability",
+        help="Run the real M9 privacy-safe structured observability demonstration",
+    )
     return parser
 
 
@@ -1341,6 +1345,222 @@ def _demo_recovery() -> int:
     return 0
 
 
+class _DeterministicTelemetryClock:
+    def __init__(self) -> None:
+        self._monotonic_ns = 0
+
+    def utc_now(self) -> datetime:
+        return datetime(2026, 9, 10, 12, tzinfo=UTC)
+
+    def monotonic_ns(self) -> int:
+        self._monotonic_ns += 1_000_000
+        return self._monotonic_ns
+
+
+def _demo_observability() -> int:
+    from conversational_memory.application import (
+        AdmissionRequest,
+        CaptureEventSink,
+        ForgetRequest,
+        RequestContext,
+        RetrievalRequest,
+        ServiceUnavailableError,
+    )
+    from conversational_memory.application.events import FORBIDDEN_EVENT_FIELDS
+    from conversational_memory.composition import compose_local_memory_service
+
+    user_id = "M9-PRIVATE-USER"
+    private_content = "M9-PRIVATE-MEMORY-CONTENT"
+    private_query = "M9-PRIVATE-QUERY"
+    private_credential = "M9-PRIVATE-CREDENTIAL"
+    private_auth = "M9-PRIVATE-AUTH"
+    demo_hmac_key = b"m9-demo-only-hmac-key-material-2026"
+    sink = CaptureEventSink()
+    telemetry_clock = _DeterministicTelemetryClock()
+    lifecycle_clock = _FixedClock(datetime(2026, 9, 10, 12, tzinfo=UTC))
+    cache = _model_cache_directory()
+
+    with tempfile.TemporaryDirectory(prefix="conversational-memory-m9-") as temporary:
+        root = Path(temporary)
+        database_path = root / "memory.sqlite3"
+        index_directory = root / "index"
+        service = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=cache,
+            clock=lifecycle_clock,
+            memory_ids=_SequenceMemoryIds("m9-observed", "m9-pending"),
+            create_index_if_missing=True,
+            relevance_threshold=0.50,
+            event_sink=sink,
+            telemetry_clock=telemetry_clock,
+            user_hmac_key=demo_hmac_key,
+        )
+        admitted = service.admit(
+            RequestContext(user_id=user_id, request_id="m9-admit"),
+            AdmissionRequest(
+                idempotency_key="m9-admit",
+                conversation_id=private_auth,
+                turn_id="m9-private-turn",
+                content=private_content,
+                memory_type="fact",
+                subject="m9-private-subject",
+                value="m9-private-value",
+                source_type="explicit_user",
+            ),
+        )
+        sensitive = service.admit(
+            RequestContext(user_id=user_id, request_id="m9-sensitive"),
+            AdmissionRequest(
+                idempotency_key="m9-sensitive",
+                conversation_id=private_auth,
+                turn_id="m9-sensitive-turn",
+                content=f"password={private_credential}",
+                memory_type="fact",
+                subject="m9-sensitive-subject",
+                value="m9-sensitive-value",
+                source_type="explicit_user",
+            ),
+        )
+        retrieved = service.retrieve(
+            RequestContext(user_id=user_id, request_id="m9-retrieve"),
+            RetrievalRequest(
+                query=private_content,
+                limit=5,
+                token_budget=128,
+            ),
+        )
+        if admitted.memory_id is None:
+            raise RuntimeError("M9 demo admission did not produce an ID")
+        forgotten = service.forget(
+            RequestContext(user_id=user_id, request_id="m9-forget"),
+            ForgetRequest(memory_id=admitted.memory_id),
+        )
+        pending = service.admit(
+            RequestContext(user_id=user_id, request_id="m9-pending"),
+            AdmissionRequest(
+                idempotency_key="m9-pending",
+                conversation_id=private_auth,
+                turn_id="m9-pending-turn",
+                content=private_query,
+                memory_type="fact",
+                subject="m9-pending-subject",
+                value="m9-pending-value",
+                source_type="explicit_user",
+            ),
+        )
+        if pending.memory_id is None:
+            raise RuntimeError("M9 demo pending seed did not produce an ID")
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "UPDATE memories SET indexing_state = 'pending' WHERE memory_id = ?",
+                (pending.memory_id,),
+            )
+            connection.commit()
+
+        degraded = compose_local_memory_service(
+            database_path=database_path,
+            index_directory=index_directory,
+            model_cache_directory=cache,
+            clock=lifecycle_clock,
+            memory_ids=_SequenceMemoryIds("m9-unavailable"),
+            relevance_threshold=0.50,
+            event_sink=sink,
+            telemetry_clock=telemetry_clock,
+            user_hmac_key=demo_hmac_key,
+        )
+        unsafe = degraded.admit(
+            RequestContext(user_id=user_id, request_id="m9-unavailable-seed"),
+            AdmissionRequest(
+                idempotency_key="m9-unavailable-seed",
+                conversation_id=private_auth,
+                turn_id="m9-unavailable-turn",
+                content="m9 unavailable seed",
+                memory_type="fact",
+                subject="m9-unavailable-subject",
+                value="m9-unavailable-value",
+                source_type="explicit_user",
+            ),
+        )
+        if unsafe.memory_id is None:
+            raise RuntimeError("M9 demo unavailable seed did not produce an ID")
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                "DELETE FROM memory_vector_mappings WHERE memory_id = ?",
+                (unsafe.memory_id,),
+            )
+            connection.commit()
+        try:
+            compose_local_memory_service(
+                database_path=database_path,
+                index_directory=index_directory,
+                model_cache_directory=cache,
+                clock=lifecycle_clock,
+                memory_ids=_SequenceMemoryIds(),
+                relevance_threshold=0.50,
+                event_sink=sink,
+                telemetry_clock=telemetry_clock,
+                user_hmac_key=demo_hmac_key,
+            )
+        except ServiceUnavailableError as error:
+            if str(error) != "unavailable_authoritative_identity":
+                raise
+        else:
+            raise RuntimeError("M9 demo unsafe startup exposed a service")
+
+        if not admitted.retrievable:
+            raise RuntimeError("M9 demo admission was not retrievable")
+        if sensitive.reason not in {
+            "sensitive_credential",
+            "sensitive_check_unavailable",
+        }:
+            raise RuntimeError("M9 demo sensitive admission was not rejected")
+        if retrieved.included_memory_ids != (admitted.memory_id,):
+            raise RuntimeError("M9 demo retrieval did not select the admitted memory")
+        if forgotten.reason != "forgotten":
+            raise RuntimeError("M9 demo forgetting did not complete")
+
+    output = b"".join(sink.lines).decode("utf-8")
+    event_names = [event.event_name.value for event in sink.events]
+    startup_names = {
+        "startup_ready",
+        "startup_degraded",
+        "startup_unavailable",
+    }
+    for required in (
+        "admission_completed",
+        "retrieval_completed",
+        "forgetting_completed",
+        "recovery_completed",
+        "startup_ready",
+        "startup_degraded",
+        "startup_unavailable",
+    ):
+        if required not in event_names:
+            raise RuntimeError("M9 demo omitted required structured evidence")
+    if sum(name in startup_names for name in event_names) != 3:
+        raise RuntimeError("M9 demo emitted an invalid startup-terminal count")
+    for index, name in enumerate(event_names):
+        if name in startup_names and event_names[index - 1] != "recovery_completed":
+            raise RuntimeError("M9 demo emitted startup before recovery completion")
+    if FORBIDDEN_EVENT_FIELDS.intersection(
+        key for line in sink.lines for key in json.loads(line)
+    ):
+        raise RuntimeError("M9 demo emitted a forbidden event field")
+    for private in (
+        user_id,
+        private_content,
+        private_query,
+        private_credential,
+        private_auth,
+        demo_hmac_key.decode("utf-8"),
+    ):
+        if private in output:
+            raise RuntimeError("M9 demo emitted private data")
+    print(output, end="")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
@@ -1361,6 +1581,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _demo_forgetting()
     if arguments.command == "demo-recovery":
         return _demo_recovery()
+    if arguments.command == "demo-observability":
+        return _demo_observability()
     return 0
 
 

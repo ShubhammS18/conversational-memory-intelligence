@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import uuid
 from collections.abc import Sequence
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser(
         "demo-observability",
         help="Run the real M9 privacy-safe structured observability demonstration",
+    )
+    subcommands.add_parser(
+        "evaluate-fixed-workload",
+        help="Evaluate six frozen workloads offline; pre-production reference implementation",
+        description="Real offline fixed-workload evaluation of a pre-production reference implementation. "
+            "Exit 0: completed with no FAIL (PARTIAL is reported quality evidence). "
+            "Exit 1: hard safety/state/evaluation failure. Exit 2: evaluation prerequisite failure. "
+            "Requires explicit offline CPU model and verified tokenizer-cache settings; no tuning options.",
     )
     return parser
 
@@ -1561,10 +1572,69 @@ def _demo_observability() -> int:
     return 0
 
 
+def _evaluate_fixed_workload(*, invalid_arguments: bool = False) -> int:
+    from conversational_memory.application import (
+        AuthorizationError,
+        ConfigurationError,
+        ConfigurationMismatchError,
+        ServiceUnavailableError,
+    )
+    from conversational_memory.entrypoints.evaluation import (
+        CaseId,
+        CaseReport,
+        EvaluationInputError,
+        PrimaryCaseEvidence,
+        ReasonCode,
+        Verdict,
+        execute_verified_workloads,
+        failed_evaluation_report,
+        serialize_report,
+    )
+
+    recorded: dict[CaseId, PrimaryCaseEvidence | CaseReport] = {}
+
+    def progress(case: PrimaryCaseEvidence | CaseReport) -> None:
+        recorded[case.case_id] = case
+
+    # Buffer/suppress every diagnostic, including model chatter and errors.
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        try:
+            if invalid_arguments:
+                raise ConfigurationError("evaluation_prerequisite_unavailable")
+            configured = os.environ.get("CONVERSATIONAL_MEMORY_MODEL_CACHE")
+            if not configured or not Path(configured).is_dir():
+                raise ConfigurationError("evaluation_prerequisite_unavailable")
+            with tempfile.TemporaryDirectory(prefix="conversational-memory-m10-") as temporary:
+                report = execute_verified_workloads(Path(__file__).resolve().parents[3],
+                    Path(temporary) / "stores", Path(configured), progress=progress)
+            output = serialize_report(report)
+            exit_code = int(any(case.status is Verdict.FAIL for case in report.cases))
+        except Exception as error:  # noqa: BLE001 -- redact ordinary evaluation failures at the CLI boundary
+            prerequisite = isinstance(error, (EvaluationInputError, ConfigurationError,
+                ConfigurationMismatchError, ServiceUnavailableError, FileNotFoundError)) \
+                or (not recorded and isinstance(error, (ValueError, OSError)))
+            reason = error.reason if isinstance(error, EvaluationInputError) \
+                else ReasonCode.PREREQUISITE_UNAVAILABLE if prerequisite \
+                else ReasonCode.SAFETY_VIOLATION if isinstance(error, AuthorizationError) \
+                else ReasonCode.UNEXPECTED_OPERATION_FAILURE
+            report = failed_evaluation_report(reason, tuple(recorded.values()), prerequisite=prerequisite)
+            output = serialize_report(report)
+            exit_code = 2 if prerequisite else 1
+    print(output, end="")
+    return exit_code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and return a process exit code."""
     parser = build_parser()
+    incoming = list(sys.argv[1:] if argv is None else argv)
+    if incoming and incoming[0] == "evaluate-fixed-workload" and incoming[1:] \
+        and incoming[1:] not in (["--help"], ["-h"]):
+        # Do not let argparse echo unapproved/private values into diagnostics.
+        return _evaluate_fixed_workload(invalid_arguments=True)
     arguments = parser.parse_args(argv)
+    if arguments.command == "evaluate-fixed-workload":
+        return _evaluate_fixed_workload()
     if arguments.command == "demo-first-slice":
         return _demo_first_slice()
     if arguments.command == "demo-current-state":

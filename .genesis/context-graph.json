@@ -1,7 +1,7 @@
 {
   "$comment": "nodes=modules, edges=[cause,effect] where cause is imported-by effect. ADD invariants by hand.",
   "project": "conversational-memory-intelligence",
-  "generated": "2026-09-17T13:44:46Z",
+  "generated": "2026-09-18T12:20:24Z",
   "nodes": [
     "external:csv",
     "external:datetime",
@@ -223,7 +223,8 @@
     "trusted_clock_expiration_is_atomic": "Current retrieval uses one validated trusted UTC instant; eligible memories expire atomically at valid_until before search, while persisted expired memories remain excluded from current retrieval and may be read only through explicit authorized history.",
     "forgetting_is_global_and_nonreactivating": "After an authorized forget request is accepted, that memory must be unavailable through every retrieval path, and forgetting a newer memory must not reactivate an older superseded memory.",
     "recovery_uses_sqlite_authority": "Recovery must rebuild and verify derived FAISS state only from fully audited SQLite authority; unsafe identity, integrity, or durable-publication state must prevent service exposure.",
-    "observability_is_private_and_noninterfering": "Local events must contain only strictly validated allowlisted decision metadata and keyed user references, never private payloads or free-form errors; ordinary telemetry failures must not repeat primary work, alter results or exceptions, change readiness or service exposure, or add lifecycle-clock reads."
+    "observability_is_private_and_noninterfering": "Local events must contain only strictly validated allowlisted decision metadata and keyed user references, never private payloads or free-form errors; ordinary telemetry failures must not repeat primary work, alter results or exceptions, change readiness or service exposure, or add lifecycle-clock reads.",
+    "fixed_workload_evaluation_is_truthful_and_safe": "Evaluation must preserve the six original fixture and baseline bytes and frozen retrieval settings, report real case-specific unweighted PASS/PARTIAL/FAIL evidence without downgrading or averaging away hard safety failures, and claim only a pre-production reference implementation."
   },
   "freeze_boundary": [
     "src/**"

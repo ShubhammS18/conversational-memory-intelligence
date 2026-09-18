@@ -33,13 +33,13 @@
   <p class="sub"><b>Rolling source of truth for what is LIVE right now.</b> The wiki can lag; this file
      cannot. Read this on every session start to avoid rebuilding what exists. This is your
      <i>git-like restart point</i>: if context is lost, this file rehydrates you.
-     Last updated: <code>2026-09-17T13:44:46Z</code> · by loop: <code>M9-closure</code></p>
+     Last updated: <code>2026-09-18T12:20:24Z</code> · by loop: <code>M10-closure</code></p>
 
   <!-- ───────────── ONE-LINE STATUS ───────────── -->
   <div class="card live">
-    <b>Now in flight:</b> No implementation work; M1–M9 are complete and M10 is next but explicitly unstarted.<br>
-    <b>Active loop:</b> NOT_STARTED · <b>Current milestone:</b> M10 · <b>Phase:</b> G0 not started<br>
-    <b>Blocked on:</b> Separate explicit authorization to begin the M10 G0 existence preflight.
+    <b>Now in flight:</b> None; approved M1–M10 are complete as a pre-production reference implementation.<br>
+    <b>Active loop:</b> NONE · <b>Last milestone:</b> M10 · <b>Phase:</b> CLOSED<br>
+    <b>Next:</b> Stop; no next milestone or post-M10 work is authorized. Quality and environmental limitations remain.
   </div>
 
   <!-- ───────────── WHAT'S LIVE ───────────── -->
@@ -57,6 +57,7 @@
         <tr><td>M7 global idempotent forgetting</td><td><code>domain/forgetting.py</code> · SQLite tombstone/cleanup state · targeted FAISS removal · <code>demo-forgetting</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 212 locked, 4 architecture, and 390 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
         <tr><td>M8 recovery and reconciliation</td><td><code>application/recovery.py</code> · SQLite authority audit · exact durable FAISS rebuild · <code>demo-recovery</code></td><td><span class="pill live">live</span></td><td>Independent L4 APPROVE; 95 locked, 4 architecture, and 457 full-suite tests; offline CPU-only demo; three-question human quiz passed</td></tr>
         <tr><td>M9 privacy-safe local observability</td><td><code>application/events.py</code> · observed service/recovery/startup · local JSONL sink · <code>demo-observability</code></td><td><span class="pill live">live</span></td><td>Fresh independent L4 APPROVE; human quiz PASS 3/3; closure: 221 locked, 4 architecture, and 666 full offline tests; real CPU-only demo and quality checks passed</td></tr>
+        <tr><td>M10 fixed-workload evaluation</td><td><code>entrypoints/evaluation.py</code> · strict loader/report and real sequential runner · <code>evaluate-fixed-workload</code></td><td><span class="pill live">complete</span></td><td>Fresh independent L4 APPROVE; quiz PASS 3/3; authorized closure: 179 locked, 4 architecture, 829 full offline tests without skips; real CLI exit 0, quality/hash/context checks. Results: 3 PASS / 3 PARTIAL / 0 FAIL; pre-production only</td></tr>
       </tbody>
     </table>
     <p class="note">Append a row the moment a milestone passes L4 VERIFY. The grep in G0 checks against this table.</p>
@@ -76,6 +77,7 @@
       <li>M7 forgetting binding and review evidence: <a href="decisions/M7-forgetting-bindings.md"><code>M7-forgetting-bindings</code></a> · <a href="checkpoints/M7.md"><code>checkpoints/M7.md</code></a>.</li>
       <li>M8 recovery binding and review evidence: <a href="decisions/M8-recovery-and-reconciliation-bindings.md"><code>M8-recovery-and-reconciliation-bindings</code></a> · <a href="checkpoints/M8.md"><code>checkpoints/M8.md</code></a>.</li>
       <li>M9 observability binding, independent approval, quiz, and closure evidence: <a href="decisions/M9-privacy-safe-observability-bindings.md"><code>M9-privacy-safe-observability-bindings</code></a> · <a href="checkpoints/M9.md"><code>checkpoints/M9.md</code></a>. Local allowlisted events only; no durable-delivery or compliance guarantee.</li>
+      <li>M10 fixed-input adaptation, safety/verdict/reporting policy, independent approval, quiz, and closure evidence: <a href="decisions/M10-fixed-workload-evaluation-bindings.md"><code>M10-fixed-workload-evaluation-bindings</code></a> · <a href="checkpoints/M10.md"><code>checkpoints/M10.md</code></a>. Six original fixtures and both baselines unchanged; frozen real CPU MPNet/0.50/limit 10/128-token policy, primary/restart/repeat/zero-budget/forgetting probes, and privacy-safe case-specific report. No aggregate score or production claim.</li>
       <li>High-risk infrastructure checkpoint and incident history: <a href="checkpoints/M1.md"><code>checkpoints/M1.md</code></a>; recovery scope and remaining limitation: <a href="../experiments/d4_engineering_reality/recovery_analysis.md"><code>recovery_analysis.md</code></a>. These links are evidence pointers, not replacements for the governing ADRs.</li>
     </ul>
   </div>
@@ -89,7 +91,7 @@
     <table>
       <thead><tr><th>Date</th><th>Milestone</th><th>Planned approach</th><th>Actual approach</th><th>Reason</th><th>Invariant impact</th></tr></thead>
       <tbody>
-        <tr><td colspan="6" style="color:var(--mut);font-style:italic">Historical verification incidents and limitations are preserved in the M1–M9 checkpoint records linked above.</td></tr>
+        <tr><td colspan="6" style="color:var(--mut);font-style:italic">Historical verification incidents and limitations are preserved in the M1–M10 checkpoint records linked above.</td></tr>
       </tbody>
     </table>
   </div>
@@ -98,8 +100,10 @@
   <h2>Known gaps &amp; the ordered Next list</h2>
   <div class="card">
     <ol>
-      <li>When separately authorized, begin M10 with its G0 existence preflight; no M10 preflight, BUILD, or workload evaluation has started.</li>
-      <li>M9 is local observability only: remote telemetry, monitoring backends, durable audit delivery, and compliance claims remain excluded. Preserve all historical verification limitations; completion of M9 does not establish production readiness.</li>
+      <li>Approved M1–M10 roadmap complete; stop. No next milestone or post-M10 work is authorized.</li>
+      <li>M10 cases1–3 remain PARTIAL: expected useful current IDs are below the frozen relevance threshold, yielding <code>expected_memory_not_selected</code> / <code>no_relevant_memory</code> / 0 tokens. Cases4–6 PASS; totals 3 PASS / 3 PARTIAL / 0 FAIL. No tuning or changed expectations concealed these limitations; CLI exit 0 means no FAIL, not perfect quality.</li>
+      <li>This remains a pre-production reference implementation. Historical installation-isolation incidents, unreconstructed embedding-cache provenance, Windows-temporary tokenizer location, unavailable review skill, process-only locking, and the unwritable default pip-cache warning remain preserved; closure resolves none of them. No byte-for-byte restoration of the historical environment/cache incident is claimed.</li>
+      <li>M9 remains local observability only: remote telemetry, monitoring backends, durable audit delivery, and compliance claims are excluded. Production evaluation/deployment, response generation, LLM judging, training, and learned reranking are outside the completed scope.</li>
     </ol>
     <p class="note">Mirror of <code>checkpoints/CURRENT.md → next_action</code>, but human-readable and durable across compaction.</p>
   </div>
@@ -107,6 +111,7 @@
   <!-- ───────────── SESSION LOG (append-only) ───────────── -->
   <h2>Session log (append-only, newest first)</h2>
   <div class="card">
+    <p><code>2026-09-18T12:20:24Z</code> — M10 formally closed with explicit authorization after fresh independent L4 APPROVE, recorded human quiz PASS 3/3, and passing fresh closure verification: 179 locked, 4 architecture, 829 full offline tests without skips; real evaluation exit 0 and all quality/hash/context checks. The fixed outcomes remain 3 PASS / 3 PARTIAL / 0 FAIL. Only six lifecycle records synchronized; source/tests/decisions/original inputs and historical incidents preserved. M1–M10 complete within pre-production scope; no further milestone authorized or begun.</p>
     <p><code>2026-09-17T13:44:46Z</code> — M9 formally closed with explicit authorization after fresh independent L4 APPROVE, human quiz PASS 3/3, and passing closure verification. M10 is next but explicitly unstarted pending separate G0 authorization; source/tests and historical incidents remain unchanged.</p>
     <p><code>2026-09-10T09:38:35Z</code> — M8 closed after fresh independent L4 APPROVE and a passed three-question human quiz; canonical state now targets not-started M9 pending separate G0 authorization.</p>
     <p><code>2026-09-09T07:48:07Z</code> — M7 closed after fresh independent L4 APPROVE and a passed three-question human quiz; canonical state now targets not-started M8 pending separate G0 authorization.</p>

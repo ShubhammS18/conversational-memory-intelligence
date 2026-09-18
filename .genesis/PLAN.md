@@ -285,6 +285,7 @@ All test and demonstration commands in this section are planned commands. They b
 
 ### M10 — Complete Fixed-Workload Evaluation
 
+- **Progress:** Complete on 2026-09-18 · fresh independent L4 APPROVE, canonical human quiz PASS 3/3, explicit closure authorization, and passing closure verification. Fixed real results remain 3 PASS / 3 PARTIAL / 0 FAIL; completion does not assert perfect recall or production readiness.
 - **Observable outcome:** The integrated system runs all six fixed workload cases and produces repeatable PASS, PARTIAL, or FAIL evidence against the naive baseline without claiming production readiness.
 - **Included behavior:** Contradictory memories, preference changes, long context, cross-user isolation, sensitive-memory rejection, and no-relevant-memory cases; integrated real-component execution; expected-result assertions; reproducible CLI summary; complete applicable test suite.
 - **Exclusions:** New or easier replacement cases, LLM-as-judge, response generation, production evaluation, deployment gates, model training, learned reranking, and production-readiness claims.
@@ -317,3 +318,4 @@ Total planned milestone token budget: 500000.
 - M7 completed on 2026-09-09 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M8 remains unstarted pending separate G0 authorization.
 - M8 completed on 2026-09-10 after independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification; M9 remains unstarted pending separate G0 authorization.
 - M9 completed on 2026-09-17 after fresh independent L4 APPROVE, canonical human quiz PASS 3/3, and authorized closure verification: 221 locked, 4 architecture, and 666 full offline tests passed; real demo and quality/context/diff checks passed. M10 is next but explicitly unstarted pending separate G0 authorization.
+- M10 completed on 2026-09-18 after fresh independent L4 APPROVE, recorded canonical human quiz PASS 3/3, and explicit closure authorization: 179 locked, 4 architecture, and 829 full offline tests passed without skips; real evaluate-fixed-workload exit 0; quality/help/input/tokenizer/context/diff checks passed. Cases1-3 remain PARTIAL and cases4-6 PASS (3 PASS / 3 PARTIAL / 0 FAIL), with all hard safety/state checks satisfied. The approved M1-M10 roadmap is complete as a pre-production reference implementation; historical incidents and environmental/quality limitations remain preserved. No next milestone or post-M10 work is authorized.

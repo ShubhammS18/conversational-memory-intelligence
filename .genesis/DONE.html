@@ -35,15 +35,15 @@
   <h1>DONE — conversational-memory-intelligence</h1>
   <p class="sub">The single source of truth for <b>what "done" means</b> and <b>the implementation plan</b>.
      This file is LOCKED — the driver model may not edit it without explicit user request.
-     Updated: 2026-08-28</p>
+     Updated: 2026-09-18 · M10 authorized closure</p>
 
   <!-- ───────────── THE LOCKED SPEC ───────────── -->
   <h2>1 · The Locked Spec (what we are building)</h2>
   <div class="card locked">
     <p><b>Routing context:</b> This is an existing project moving from completed design and focused
        prototypes into integrated implementation. The target is a synchronous local Python modular monolith.
-       The current focus is Phase 3 Backend/API implementation; the completed Phase 6 Memory Architecture
-       governs the implementation, and Phase 9 fixed-workload evaluation follows integration. The reusable
+       The approved M1–M10 implementation and Phase 9 fixed-workload evaluation are complete;
+       the completed Phase 6 Memory Architecture continues to govern the implementation. The reusable
        memory layer is the main system; chatbot and response generation are outside the approved implementation.</p>
 
     <p><b>Cognitive job:</b> Given a user’s conversation turns, current query, identity, and existing
@@ -234,8 +234,11 @@
     <div class="gate"><span class="box"></span><span class="label">
       The integrated system runs all six cases and records reproducible PASS, PARTIAL, or FAIL evidence without
       claiming production readiness.
-      <span class="pill">final evaluation milestone</span>
+      <span class="pill live">complete</span>
       <span class="note">Proof: <code>python -m pytest tests/evaluation -q</code>.</span>
+      <span class="note">M10 closure: independent L4 APPROVE, human quiz PASS 3/3, and fresh closure verification;
+      real fixed results remain 3 PASS / 3 PARTIAL / 0 FAIL. Cases1–3 omit expected useful memories;
+      completion is not perfect retrieval quality or production readiness. Evidence: <a href="checkpoints/M10.md">M10 checkpoint</a>.</span>
     </span></div>
 
     <p><b>Phase 12 · Reliability Engineering</b></p>
@@ -307,7 +310,7 @@
         <tr><td>M7</td><td>Global, Idempotent Forgetting</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-forgetting</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
         <tr><td>M8</td><td>Recovery and Reconciliation</td><td>1, 3, 6, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-recovery</code></td><td>L1, L3, L4</td><td><span class="pill live">complete</span></td></tr>
         <tr><td>M9</td><td>Privacy-Safe Observability</td><td>1, 3, 12</td><td><code>python -m conversational_memory.entrypoints.cli demo-observability</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
-        <tr><td>M10</td><td>Complete Fixed-Workload Evaluation</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli evaluate-fixed-workload</code></td><td>L1, L4</td><td><span class="pill">next · unstarted</span></td></tr>
+        <tr><td>M10</td><td>Complete Fixed-Workload Evaluation</td><td>1, 3, 6, 9, 12</td><td><code>python -m conversational_memory.entrypoints.cli evaluate-fixed-workload</code></td><td>L1, L4</td><td><span class="pill live">complete</span></td></tr>
       </tbody>
     </table>
     <p class="note">Total token budget = 10 milestones × 50000 = 500000. Update
@@ -316,6 +319,11 @@
        All commands are planned commands until their milestone creates the named implementation and test files.
        M1 additionally requires <code>python -m pip install -e .</code> followed by
        <code>python -m conversational_memory.entrypoints.cli --help</code> before its verification and demonstration commands.</p>
+    <p class="note">M1–M10 are complete within the approved pre-production scope. M10 closure verified
+       179 locked, 4 architecture, and 829 full offline tests without skips, real evaluation exit 0,
+       quality/help/hash/context/diff checks, independent L4 APPROVE, and quiz PASS 3/3.
+       Cases1–3 remain PARTIAL; cases4–6 PASS; no hard safety/state FAIL occurred.
+       Historical incidents and environmental limitations remain preserved. No next milestone is authorized.</p>
   </div>
 
   <!-- ───────────── SKILL LOADING ───────────── -->
